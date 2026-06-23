@@ -840,12 +840,126 @@ export default function App() {
 
   // 習慣数で各部の余白・フォントを段階的に縮める（編集中は追加セルぶん+1として詰める）
   const hc = hasGoal ? g.habits.length : 0;
-  const hcEff = hc + (editMode && hc < MAX_HABITS ? 1 : 0); // レイアウト計算用の実効セル数
+  const showAddCell = editMode && hc < MAX_HABITS; // 末尾に「追加」セルを出すか
+  const hcEff = hc + (showAddCell ? 1 : 0); // レイアウト計算用の実効セル数
   const compact = hcEff >= 7 ? 2 : hcEff >= 4 ? 1 : 0; // 0=通常 1=中 2=詰め
+  // 3個ずつの行に割る（端数行も中央寄せで見せるため、grid ではなく行ごとの flex で描く）
+  const habitRows = (() => {
+    const items = hasGoal ? g.habits.map((h, i) => ({ h, i })) : [];
+    const list = showAddCell ? [...items, { add: true }] : items;
+    const rows = [];
+    for (let k = 0; k < list.length; k += 3) rows.push(list.slice(k, k + 3));
+    return rows;
+  })();
   const screenGap = compact === 2 ? 4 : compact === 1 ? 7 : 10;
   const idNameSize = compact === 2 ? 18 : compact === 1 ? 20 : 24;
   const idNameMT = compact === 2 ? 2 : compact === 1 ? 3 : 6;
   const idBlockPT = compact >= 1 ? 0 : 2;
+
+  // 習慣セル1個を描く（行分割レイアウトから呼ぶ）
+  const renderHabitCell = (h, i) => {
+    const col = `rgb(${h.c.join(",")})`;
+    const st = habitStatus(curGi, i); const dis = full || !st.ok;
+    const L = logs[g.id + ":" + h.id]; const streak = streakInfo(h, L, day).cur;
+    const mode = h.fmode || "daily";
+    const dueT = mode === "days" ? (h.days || [0, 1, 2, 3, 4, 5, 6]).includes(((day % 7) + 7) % 7) : true;
+    const tdc = L && L.day === day ? L.td : 0;
+    const dt = dueT && tdc >= (mode === "week" ? 1 : Math.max(1, h.perDay || 1)); // 今日ぶん完了（週モードは1日1回で完了）
+    const inactive = full || (!st.ok && !dt);
+    const gold = dt && allClear; // 全部終わって金色
+    const fillCol = gold ? `rgb(${GOLD_FILL.join(",")})` : `rgb(${h.c.join(",")})`;
+    const type = h.type || "pos";
+    const isTimed = type === "timed";
+    const running = !!(timing && timing.key === (g.id + ":" + h.id));
+    const btnDisabled = isTimed ? (full || (!st.ok && !running)) : dis;
+    const handlers = isTimed ? { onClick: () => startTimer(i) } : { onPointerDown: down(i), onPointerUp: up, onPointerLeave: up, onPointerCancel: up };
+    const perDay = mode === "week" ? 1 : Math.max(1, h.perDay || 1);
+    const frac = dueT ? Math.min(tdc / perDay, 1) : 0; // 1日◯回の進捗
+    const fc = gold ? GOLD_FILL : h.c;
+    const onFillIcon = (0.299 * fc[0] + 0.587 * fc[1] + 0.114 * fc[2]) > 150 ? "#0B0C10" : "#F4F1EA"; // 塗りの上で見える色
+    const timedHint = isTimed && st.ok && !dt && !running && !full; // ▶25
+    return (
+      <div key={h.id} ref={(el) => { if (el) habitCellRefs.current[h.id] = el; else delete habitCellRefs.current[h.id]; }} style={s.cell}>
+        {hDragFrom === i ? (<>
+          {/* 掴んでいる間の置き場所（点線の円） */}
+          <div style={{ width: 78, height: 78, borderRadius: "50%", border: `2px dashed ${T.hair2}`, boxSizing: "border-box" }} />
+          <span style={{ ...s.cellLabel, opacity: 0 }}>{h.name}</span>
+        </>) : (<>
+        <div style={{ position: "relative" }}>
+          <button onContextMenu={(e) => e.preventDefault()} style={{ ...s.circleBtn, borderRadius: "50%", opacity: editMode ? 1 : (inactive ? 0.34 : 1), animation: gold ? "btnglow 1.8s ease-in-out infinite" : undefined, ...(editMode ? { cursor: hDragFrom !== null ? "grabbing" : "grab" } : {}), touchAction: editMode ? "none" : undefined }} disabled={editMode ? false : btnDisabled} {...(editMode ? {
+            onPointerDown: (e) => {
+              e.stopPropagation();
+              const px = e.clientX, py = e.clientY;
+              hHoldRef.current = setTimeout(() => {
+                hDragFromRef.current = i; setHDragFrom(i);
+                lastSwapRef.current = 0;
+                setGhost({ Icon: h.Icon, emoji: h.emoji, name: h.name, col, x: px, y: py });
+                try { navigator.vibrate && navigator.vibrate(8); } catch (err) {}
+                // ドラッグ中はwindowで座標を拾う（セルのDOMが動いても取りこぼさない）
+                const move = (ev) => {
+                  const from = hDragFromRef.current; if (from === null) return;
+                  const x = ev.clientX, y = ev.clientY;
+                  if (ghostRef.current) ghostRef.current.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+                  if (Date.now() - lastSwapRef.current < 200) return; // 入れ替え直後はFLIPが終わるまで判定しない（振動防止）
+                  const habits = goalsRef.current[curGi]?.habits || [];
+                  let target = from, best = Infinity;
+                  for (let k = 0; k < habits.length; k++) {
+                    const el = habitCellRefs.current[habits[k].id]; if (!el) continue;
+                    const r = el.getBoundingClientRect();
+                    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                    const d = Math.hypot(x - cx, y - cy);
+                    if (d < best) { best = d; target = k; }
+                  }
+                  if (target !== from) { swapHabits(from, target); hDragFromRef.current = target; setHDragFrom(target); lastSwapRef.current = Date.now(); }
+                };
+                const end = () => {
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", end);
+                  window.removeEventListener("pointercancel", end);
+                  hDragFromRef.current = null; setHDragFrom(null); setGhost(null);
+                };
+                window.addEventListener("pointermove", move, { passive: true });
+                window.addEventListener("pointerup", end);
+                window.addEventListener("pointercancel", end);
+              }, 320);
+            },
+            onPointerUp: () => { if (hDragFromRef.current === null) { clearTimeout(hHoldRef.current); openEdit(i); } },
+            onPointerLeave: () => { if (hDragFromRef.current === null) clearTimeout(hHoldRef.current); },
+          } : handlers)}>
+            <svg width="78" height="78" style={{ position: "absolute", inset: 0 }}>
+              <circle cx="39" cy="39" r={RR} fill="none" stroke={dt ? fillCol : `rgba(${h.c.join(",")},0.28)`} strokeWidth="3" strokeDasharray={type === "neg" && !dt ? "4 4" : undefined} />
+              {frac > 0 && frac < 1 && <path d={sectorPath(39, 39, RR - 1.5, frac)} fill={fillCol} />}
+              {frac >= 1 && <circle cx="39" cy="39" r={RR - 1.5} fill={fillCol} />}
+              {perDay > 1 && Array.from({ length: perDay }).map((_, k) => {
+                const a = -Math.PI / 2 + k * (2 * Math.PI / perDay);
+                return <line key={k} x1="39" y1="39" x2={39 + (RR - 1.5) * Math.cos(a)} y2={39 + (RR - 1.5) * Math.sin(a)} stroke="rgba(11,12,16,0.28)" strokeWidth="1.4" />;
+              })}
+              {held === i && !isTimed && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${HOLD}ms linear forwards` }} />}
+              {running && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${timing.dur}ms linear forwards` }} />}
+            </svg>
+            {h.emoji
+              ? <span style={{ position: "relative", fontSize: 26, lineHeight: 1, opacity: running ? 0.5 : 1 }}>{h.emoji}</span>
+              : <h.Icon size={25} color={frac > 0 ? onFillIcon : col} strokeWidth={2.2} style={{ position: "relative", opacity: running ? 0.5 : 1, filter: frac > 0 && onFillIcon !== "#0B0C10" ? "drop-shadow(0 0.5px 1px rgba(0,0,0,0.35))" : "none" }} />}
+          </button>
+          {!editMode && streak > 0 && <span style={s.streakBadge}><Flame size={10} color="#0B0C10" strokeWidth={2.6} fill="#0B0C10" />{streak}</span>}
+          {!editMode && timedHint && <span style={s.timedBadge}>▶{h.min || 5}</span>}
+          {!editMode && h.url && h.url.trim() && (
+            <a href={/^https?:\/\//i.test(h.url.trim()) ? h.url.trim() : `https://${h.url.trim()}`}
+              target="_blank" rel="noopener noreferrer" aria-label={`${h.name} のリンクを開く`}
+              onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={s.linkBadge}>
+              <ExternalLink size={11} color={T.lo} strokeWidth={2.4} />
+            </a>
+          )}
+          {editMode && <button style={s.editBadge} onClick={(e) => { e.stopPropagation(); openEdit(i); }} aria-label={`${h.name} を編集`}><Pencil size={11} color="#0B0C10" strokeWidth={2.6} /></button>}
+        </div>
+        <span style={s.cellLabel}>{h.name}</span>
+        {perDay > 1 && dueT && !full && <span style={{ ...s.cellStatus, color: tdc >= perDay ? T.gold : T.lo }}>{tdc}/{perDay}</span>}
+        </>)}
+      </div>
+    );
+  };
 
   return (
     <div className="tsumiki-app" style={s.page} onContextMenu={(e) => e.preventDefault()}>
@@ -876,7 +990,7 @@ export default function App() {
 
         <div ref={stageRef} style={{ ...s.stageWrap, position: "relative" }}>
           <div style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: drag ? 0 : 1 }}>
-            <canvas ref={canvasRef} style={{ width: 320, height: 300, maxWidth: "100%", display: "block", margin: "0 auto" }} />
+            <canvas ref={canvasRef} style={{ width: compact === 2 ? 256 : 320, height: compact === 2 ? 240 : 300, maxWidth: "100%", display: "block", margin: "0 auto", transition: "width .2s, height .2s" }} />
           </div>
           {trans && <img src={trans.url} alt="" onAnimationEnd={() => setTrans(null)} style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 320, height: 300, maxWidth: "100%", pointerEvents: "none", animation: `${trans.dir > 0 ? "orbOutNext" : "orbOutPrev"} .3s cubic-bezier(.22,1,.3,1) forwards` }} />}
           {hasGoal && cap > 0 && (
@@ -947,122 +1061,28 @@ export default function App() {
           </div>
         ) : (
         <div style={{ ...s.habits, gap: compact === 2 ? 2 : compact === 1 ? 3 : 4 }}>
+          {showCoach && !editMode && <div style={s.coach}>アイコンを長押しすると、器にひと粒落ちます<span style={s.coachArrow}>▾</span></div>}
+          <div style={{ ...s.grid, gap: compact === 2 ? 4 : compact === 1 ? 8 : 12 }}>
+          {habitRows.map((row, ri) => {
+            const two = row.length === 2; // 2個の行は画面を3分割するように散らす
+            return (
+            <div key={ri} style={two
+              ? { ...s.gridRow, width: "100%", justifyContent: "space-evenly" }
+              : { ...s.gridRow, gap: compact === 2 ? "0 24px" : compact === 1 ? "0 32px" : "0 40px" }}>
+              {row.map((it) => it.add ? (
+                <div key="add" style={{ ...s.cell, animation: "cellIn .58s cubic-bezier(.2,.8,.3,1) both" }}>
+                  <button style={s.addCell} onClick={openAdd}><Plus size={26} color={T.gold} strokeWidth={2} /></button>
+                  <span style={s.cellLabel}>追加</span>
+                </div>
+              ) : renderHabitCell(it.h, it.i))}
+            </div>
+            );
+          })}
+          </div>
           <div style={s.habitTools}>
             <button style={{ ...s.editIcon, ...(editMode ? s.editIconOn : {}) }} onClick={() => setEditMode((m) => !m)} aria-label={editMode ? "完了" : "習慣を編集"}>
               {editMode ? <Check size={15} color="#0B0C10" strokeWidth={3} /> : <Pencil size={14} color={T.lo} strokeWidth={2.2} />}
             </button>
-          </div>
-          {showCoach && !editMode && <div style={s.coach}>アイコンを長押しすると、器にひと粒落ちます<span style={s.coachArrow}>▾</span></div>}
-          <div style={{ ...s.grid, rowGap: compact === 2 ? 4 : compact === 1 ? 8 : 12 }}>
-          {g.habits.map((h, i) => {
-            const col = `rgb(${h.c.join(",")})`;
-            const st = habitStatus(curGi, i); const dis = full || !st.ok;
-            const L = logs[g.id + ":" + h.id]; const streak = streakInfo(h, L, day).cur;
-            const mode = h.fmode || "daily";
-            const dueT = mode === "days" ? (h.days || [0, 1, 2, 3, 4, 5, 6]).includes(((day % 7) + 7) % 7) : true;
-            const tdc = L && L.day === day ? L.td : 0;
-            const dt = dueT && tdc >= (mode === "week" ? 1 : Math.max(1, h.perDay || 1)); // 今日ぶん完了（週モードは1日1回で完了）
-            const inactive = full || (!st.ok && !dt);
-            const gold = dt && allClear; // 全部終わって金色
-            const fillCol = gold ? `rgb(${GOLD_FILL.join(",")})` : `rgb(${h.c.join(",")})`;
-            const type = h.type || "pos";
-            const isTimed = type === "timed";
-            const running = !!(timing && timing.key === (g.id + ":" + h.id));
-            const btnDisabled = isTimed ? (full || (!st.ok && !running)) : dis;
-            const handlers = isTimed ? { onClick: () => startTimer(i) } : { onPointerDown: down(i), onPointerUp: up, onPointerLeave: up, onPointerCancel: up };
-            const perDay = mode === "week" ? 1 : Math.max(1, h.perDay || 1);
-            const frac = dueT ? Math.min(tdc / perDay, 1) : 0; // 1日◯回の進捗
-            const fc = gold ? GOLD_FILL : h.c;
-            const onFillIcon = (0.299 * fc[0] + 0.587 * fc[1] + 0.114 * fc[2]) > 150 ? "#0B0C10" : "#F4F1EA"; // 塗りの上で見える色
-            const timedHint = isTimed && st.ok && !dt && !running && !full; // ▶25
-            return (
-              <div key={h.id} ref={(el) => { if (el) habitCellRefs.current[h.id] = el; else delete habitCellRefs.current[h.id]; }} style={s.cell}>
-                {hDragFrom === i ? (<>
-                  {/* 掴んでいる間の置き場所（点線の円） */}
-                  <div style={{ width: 78, height: 78, borderRadius: "50%", border: `2px dashed ${T.hair2}`, boxSizing: "border-box" }} />
-                  <span style={{ ...s.cellLabel, opacity: 0 }}>{h.name}</span>
-                </>) : (<>
-                <div style={{ position: "relative" }}>
-                  <button onContextMenu={(e) => e.preventDefault()} style={{ ...s.circleBtn, borderRadius: "50%", opacity: editMode ? 1 : (inactive ? 0.34 : 1), animation: gold ? "btnglow 1.8s ease-in-out infinite" : undefined, ...(editMode ? { cursor: hDragFrom !== null ? "grabbing" : "grab" } : {}), touchAction: editMode ? "none" : undefined }} disabled={editMode ? false : btnDisabled} {...(editMode ? {
-                    onPointerDown: (e) => {
-                      e.stopPropagation();
-                      const px = e.clientX, py = e.clientY;
-                      hHoldRef.current = setTimeout(() => {
-                        hDragFromRef.current = i; setHDragFrom(i);
-                        lastSwapRef.current = 0;
-                        setGhost({ Icon: h.Icon, emoji: h.emoji, name: h.name, col, x: px, y: py });
-                        try { navigator.vibrate && navigator.vibrate(8); } catch (err) {}
-                        // ドラッグ中はwindowで座標を拾う（セルのDOMが動いても取りこぼさない）
-                        const move = (ev) => {
-                          const from = hDragFromRef.current; if (from === null) return;
-                          const x = ev.clientX, y = ev.clientY;
-                          if (ghostRef.current) ghostRef.current.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
-                          if (Date.now() - lastSwapRef.current < 200) return; // 入れ替え直後はFLIPが終わるまで判定しない（振動防止）
-                          const habits = goalsRef.current[curGi]?.habits || [];
-                          let target = from, best = Infinity;
-                          for (let k = 0; k < habits.length; k++) {
-                            const el = habitCellRefs.current[habits[k].id]; if (!el) continue;
-                            const r = el.getBoundingClientRect();
-                            const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-                            const d = Math.hypot(x - cx, y - cy);
-                            if (d < best) { best = d; target = k; }
-                          }
-                          if (target !== from) { swapHabits(from, target); hDragFromRef.current = target; setHDragFrom(target); lastSwapRef.current = Date.now(); }
-                        };
-                        const end = () => {
-                          window.removeEventListener("pointermove", move);
-                          window.removeEventListener("pointerup", end);
-                          window.removeEventListener("pointercancel", end);
-                          hDragFromRef.current = null; setHDragFrom(null); setGhost(null);
-                        };
-                        window.addEventListener("pointermove", move, { passive: true });
-                        window.addEventListener("pointerup", end);
-                        window.addEventListener("pointercancel", end);
-                      }, 320);
-                    },
-                    onPointerUp: () => { if (hDragFromRef.current === null) { clearTimeout(hHoldRef.current); openEdit(i); } },
-                    onPointerLeave: () => { if (hDragFromRef.current === null) clearTimeout(hHoldRef.current); },
-                  } : handlers)}>
-                    <svg width="78" height="78" style={{ position: "absolute", inset: 0 }}>
-                      <circle cx="39" cy="39" r={RR} fill="none" stroke={dt ? fillCol : `rgba(${h.c.join(",")},0.28)`} strokeWidth="3" strokeDasharray={type === "neg" && !dt ? "4 4" : undefined} />
-                      {frac > 0 && frac < 1 && <path d={sectorPath(39, 39, RR - 1.5, frac)} fill={fillCol} />}
-                      {frac >= 1 && <circle cx="39" cy="39" r={RR - 1.5} fill={fillCol} />}
-                      {perDay > 1 && Array.from({ length: perDay }).map((_, k) => {
-                        const a = -Math.PI / 2 + k * (2 * Math.PI / perDay);
-                        return <line key={k} x1="39" y1="39" x2={39 + (RR - 1.5) * Math.cos(a)} y2={39 + (RR - 1.5) * Math.sin(a)} stroke="rgba(11,12,16,0.28)" strokeWidth="1.4" />;
-                      })}
-                      {held === i && !isTimed && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
-                        strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${HOLD}ms linear forwards` }} />}
-                      {running && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
-                        strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${timing.dur}ms linear forwards` }} />}
-                    </svg>
-                    {h.emoji
-                      ? <span style={{ position: "relative", fontSize: 26, lineHeight: 1, opacity: running ? 0.5 : 1 }}>{h.emoji}</span>
-                      : <h.Icon size={25} color={frac > 0 ? onFillIcon : col} strokeWidth={2.2} style={{ position: "relative", opacity: running ? 0.5 : 1, filter: frac > 0 && onFillIcon !== "#0B0C10" ? "drop-shadow(0 0.5px 1px rgba(0,0,0,0.35))" : "none" }} />}
-                  </button>
-                  {!editMode && streak > 0 && <span style={s.streakBadge}><Flame size={10} color="#0B0C10" strokeWidth={2.6} fill="#0B0C10" />{streak}</span>}
-                  {!editMode && timedHint && <span style={s.timedBadge}>▶{h.min || 5}</span>}
-                  {!editMode && h.url && h.url.trim() && (
-                    <a href={/^https?:\/\//i.test(h.url.trim()) ? h.url.trim() : `https://${h.url.trim()}`}
-                      target="_blank" rel="noopener noreferrer" aria-label={`${h.name} のリンクを開く`}
-                      onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={s.linkBadge}>
-                      <ExternalLink size={11} color={T.lo} strokeWidth={2.4} />
-                    </a>
-                  )}
-                  {editMode && <button style={s.editBadge} onClick={(e) => { e.stopPropagation(); openEdit(i); }} aria-label={`${h.name} を編集`}><Pencil size={11} color="#0B0C10" strokeWidth={2.6} /></button>}
-                </div>
-                <span style={s.cellLabel}>{h.name}</span>
-                {perDay > 1 && dueT && !full && <span style={{ ...s.cellStatus, color: tdc >= perDay ? T.gold : T.lo }}>{tdc}/{perDay}</span>}
-                </>)}
-              </div>
-            );
-          })}
-          {editMode && g.habits.length < MAX_HABITS && (
-          <div style={{ ...s.cell, animation: "cellIn .58s cubic-bezier(.2,.8,.3,1) both" }}>
-            <button style={s.addCell} onClick={openAdd}><Plus size={26} color={T.gold} strokeWidth={2} /></button>
-            <span style={s.cellLabel}>追加</span>
-          </div>
-          )}
           </div>
         </div>
         )}
@@ -1631,7 +1651,7 @@ const mkRaw = (T) => ({
   idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2 },
   analyzeBtn: { width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
   habits: { display: "flex", flexDirection: "column", gap: 4 },
-  habitTools: { display: "flex", justifyContent: "flex-end", alignItems: "center" },
+  habitTools: { display: "flex", justifyContent: "flex-start", alignItems: "center" },
   animChip: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
   animChipOn: { borderColor: T.gold, color: T.gold, background: "rgba(201,162,74,0.1)" },
   editIcon: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
@@ -1639,7 +1659,7 @@ const mkRaw = (T) => ({
   editBadge: { position: "absolute", top: -4, left: -4, width: 22, height: 22, borderRadius: 999, background: T.gold, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, zIndex: 3, boxShadow: "0 1px 5px rgba(0,0,0,0.45)", animation: "badgePop .62s cubic-bezier(.2,.8,.3,1) both" },
   idLabel: { fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 3, color: T.lo2 },
   idName: { fontSize: 24, fontWeight: 600, letterSpacing: 1, marginTop: 6 },
-  stageWrap: { background: T.panel, borderRadius: 16, border: `1px solid ${T.hair}`, overflow: "hidden" },
+  stageWrap: { background: T.panel, borderRadius: 16, border: `1px solid ${T.hair}`, overflow: "hidden", flexShrink: 0 },
   orbPhotoCtrl: { position: "absolute", top: 10, right: 12, display: "flex", gap: 6, zIndex: 4 },
   orbPhotoBtn: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: T.surface, color: T.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 17, lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.22)" },
   frameTL: { position: "absolute", top: 11, left: 13, display: "flex", alignItems: "baseline", gap: 2, pointerEvents: "none" },
@@ -1651,7 +1671,8 @@ const mkRaw = (T) => ({
   dot: { width: 8, height: 8, borderRadius: 999, border: "none", background: T.lo2, cursor: "pointer", padding: 0 },
   dotOn: { background: T.gold, width: 18, borderRadius: 4 },
   dotPlus: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", color: T.lo, fontSize: 12, cursor: "pointer", lineHeight: 1, padding: 0, marginLeft: 2, display: "flex", alignItems: "center", justifyContent: "center" },
-  grid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px 8px", padding: "2px 0", justifyItems: "center" },
+  grid: { display: "flex", flexDirection: "column", alignItems: "center", padding: "2px 0" },
+  gridRow: { display: "flex", justifyContent: "center", alignItems: "flex-start" },
   cell: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 84 },
   circleBtn: { position: "relative", width: 78, height: 78, borderRadius: "50%", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", userSelect: "none", touchAction: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", outline: "none", padding: 0 },
   addCell: { width: 78, height: 78, borderRadius: "50%", background: T.cellGrad, border: `1px solid ${T.hair2}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
