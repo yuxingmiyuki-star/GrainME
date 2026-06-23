@@ -1,0 +1,1811 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0B0C10" />
+<title>TSUMIKI</title>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  html, body { position: fixed; width: 100%; overflow: hidden; overscroll-behavior: none; touch-action: none; }
+  body { background: #000; -webkit-font-smoothing: antialiased; }
+  #root { overflow: hidden; }
+  #loading { color: #6B6F78; font-family: ui-monospace, monospace; font-size: 13px; line-height:1.7;
+             height: 100%; display: flex; align-items: center; justify-content: center;
+             text-align:center; padding:0 24px; white-space:pre-wrap; }
+</style>
+<script>
+  // 起動でコケたら原因を画面に出す（無言の読み込み中を防ぐ）
+  function showErr(msg){ var r=document.getElementById('loading'); if(r){ r.textContent='起動エラー:\n'+msg; } }
+  window.addEventListener('error', function(e){ showErr((e.message||'')+(e.filename?'\n'+e.filename:'')); });
+  window.addEventListener('unhandledrejection', function(e){ var r=e.reason; showErr(r&&(r.message||r)||'読み込みに失敗'); });
+</script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="loading">TSUMIKI を読み込み中…</div></div>
+<script type="text/babel" data-type="module" data-presets="react">
+import React from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import { useState, useRef, useEffect, useLayoutEffect } from "https://esm.sh/react@18.3.1";
+import { Dumbbell, Droplet, TrendingUp, Apple, BookOpen, Pencil, Brain, Coffee, MessageCircle, Heart, Users, Footprints, Moon, Sun, Star, Smile, Music, Leaf, Bike, Bed, Flame, Plus, BarChart3, ExternalLink, Settings, Download, Upload, Check, Ban, Clock, ChevronDown, ChevronUp, Sparkles, Target, Zap, Trophy, Camera, Briefcase, Utensils, Activity, Wind, Mountain, Globe, Wallet, GraduationCap, Guitar, Carrot, Pill, Sunrise, Waves, Phone, Mail, Smartphone, Gamepad2, Tv, Wine, Cigarette, Bath, ShoppingBag, Palette, Code, Calendar, Hand, Home, Plane, Flower2, TreePine } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+import { AlarmClock, Anchor, Award, Backpack, Banknote, Battery, Beef, Beer, Bell, Bird, Bone, Brush, Bug, Building, Bus, Cake, CalendarCheck, Car, Cat, Cherry, ChefHat, Clapperboard, Cloud, Coins, Compass, Cookie, CreditCard, Croissant, Crown, Cpu, Dice5, Disc, Dog, DollarSign, Droplets, Drum, Egg, Eye, Feather, Film, Fish, Flag, Flower, Folder, Fuel, Gem, Gift, GlassWater, Glasses, Grape, HandHeart, Handshake, Headphones, HeartPulse, Highlighter, Hourglass, IceCream, Key, Keyboard, Lamp, Languages, Laptop, Laugh, Library, Lightbulb, LineChart, Lock, Luggage, MapPin, Martini, Medal, MessageSquare, Mic, Milk, Monitor, MountainSnow, Newspaper, NotebookPen, Package, PaintBucket, PartyPopper, PawPrint, PencilLine, PenTool, PersonStanding, PhoneCall, PiggyBank, Pizza, Power, Presentation, Puzzle, Rabbit, Radio, Recycle, Rocket, Salad, Sandwich, School, Scissors, Send, Shirt, ShoppingCart, ShowerHead, Snowflake, Sofa, Soup, Speech, Sprout, Stethoscope, Store, Sunset, Syringe, Tablet, Tent, Thermometer, ThumbsUp, Timer, TrainFront, Trash2, TreeDeciduous, TrendingDown, Trees, Umbrella, User, UserPlus, Video, Watch, Wifi } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.3.1";
+
+// 安定ID：ゴール/習慣の背番号。並べ替え・削除・保存に強くする
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const withIds = (gs) => gs.map((g) => ({ ...g, id: g.id || uid(), habits: (g.habits || []).map((h) => ({ ...h, id: h.id || uid(), Icon: h.Icon || ICONS[h.ii] || ICONS[0] })) }));
+// 保存用：Iconは関数なのでJSON化できない→ICONSの番号(ii)に変換して保存
+const serializeGoals = (gs) => gs.map((g) => ({ ...g, habits: (g.habits || []).map(({ Icon, ...h }) => ({ ...h, ii: ICONS.indexOf(Icon) })) }));
+
+// 端末内ストレージ。try/catch で包み、保存が使えない環境（このプレビュー等）ではメモリ動作に自動フォールバック
+const SAVE_KEY = "tsumiki:v1";
+const SCHEMA = 2;
+// 現地時刻での通算日数。Unix epoch(1970-01-01)は木曜なので +4 して day%7 を 日曜=0 に揃える
+const DAY_MS = 86400000;
+const todayNum = () => { const d = new Date(); return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / DAY_MS) + 4; };
+// 保存データの移行：バージョンが違っても捨てずに現行スキーマへ整形する。
+// スキーマを上げたら、ここに v(n)→v(n+1) の変換を追記していく（フィールドは加算的に増やす方針）。
+const migrate = (d) => {
+  if (!d || typeof d !== "object") return null;
+  return {
+    ...d, v: SCHEMA,
+    goals: Array.isArray(d.goals) ? d.goals : [],
+    logs: d.logs && typeof d.logs === "object" ? d.logs : {},
+    collection: Array.isArray(d.collection) ? d.collection : [],
+    orbs: d.orbs && typeof d.orbs === "object" ? d.orbs : {},
+  };
+};
+const safeLoad = () => { try { const r = localStorage.getItem(SAVE_KEY); return r ? migrate(JSON.parse(r)) : null; } catch (e) { return null; } };
+const safeSave = (obj) => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(obj)); } catch (e) {} };
+const SAVED = safeLoad();
+// 初回イントロ：一度見たら二度と出さない（端末内に別キーで記録）
+const INTRO_KEY = "tsumiki:introSeen";
+const SEEN_INTRO = (() => { try { return localStorage.getItem(INTRO_KEY) === "1"; } catch (e) { return false; } })();
+// 最初の長押しコーチマーク：一度でも粒を積んだら二度と出さない
+const COACH_KEY = "tsumiki:coachSeen";
+const SEEN_COACH = (() => { try { return localStorage.getItem(COACH_KEY) === "1"; } catch (e) { return false; } })();
+// イントロの概念図に使う金系の粒色（ユーザーの実データではなく、満ちた器の見本）
+const INTRO_GRAINS = Array.from({ length: 18 }, (_, i) => [201 - (i % 3) * 9, 162 - (i % 4) * 7, 74 - (i % 3) * 7]);
+
+const SK_HI = "#F2EFE9", SK_LO = "#6B6F78"; // 器（暗いステージ）の上に乗る固定色。テーマに依らず明るい
+const THEMES = {
+  dark: {
+    pageBg: "#000", bg: "#0B0C10", panel: "#0D0F14", surface: "#0D0F14", surface2: "#1d2027", modalBg: "#14161C",
+    hair: "rgba(255,255,255,0.07)", hair2: "rgba(255,255,255,0.13)", track: "rgba(255,255,255,0.08)", pip: "rgba(255,255,255,0.28)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(255,255,255,0.035), rgba(255,255,255,0.01))",
+    overlayBg: "rgba(0,0,0,0.6)", scrim: "rgba(11,12,16,0.72)", hi: "#F2EFE9", lo: "#6B6F78", lo2: "#43474F", gold: "#C9A24A", onGold: "#1a1a1a", orb: "glass",
+  },
+  ai: {
+    pageBg: "#05070E", bg: "#0A0E18", panel: "#0A0E18", surface: "#0E1322", surface2: "#1A2138", modalBg: "#121829",
+    hair: "rgba(255,255,255,0.07)", hair2: "rgba(255,255,255,0.13)", track: "rgba(255,255,255,0.08)", pip: "rgba(255,255,255,0.28)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(255,255,255,0.035), rgba(255,255,255,0.01))",
+    overlayBg: "rgba(0,0,0,0.6)", scrim: "rgba(10,14,24,0.72)", hi: "#E7ECF6", lo: "#717C96", lo2: "#3D465E", gold: "#C9A24A", onGold: "#1a1a1a", orb: "glass",
+  },
+  budou: {
+    pageBg: "#0B0509", bg: "#130A12", panel: "#130A12", surface: "#190F18", surface2: "#281828", modalBg: "#1B121C",
+    hair: "rgba(255,255,255,0.07)", hair2: "rgba(255,255,255,0.13)", track: "rgba(255,255,255,0.08)", pip: "rgba(255,255,255,0.28)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(255,255,255,0.035), rgba(255,255,255,0.01))",
+    overlayBg: "rgba(0,0,0,0.6)", scrim: "rgba(19,10,18,0.72)", hi: "#F1E7EE", lo: "#82717E", lo2: "#4B3D49", gold: "#C9A24A", onGold: "#1a1a1a", orb: "glass",
+  },
+  light: {
+    pageBg: "#D9DDE2", bg: "#FCFDFE", panel: "#EBEFF3", surface: "#F2F5F8", surface2: "#E7EBF0", modalBg: "#FFFFFF",
+    hair: "rgba(28,40,56,0.08)", hair2: "rgba(28,40,56,0.15)", track: "rgba(28,40,56,0.08)", pip: "rgba(28,40,56,0.28)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(20,30,45,0.045), rgba(20,30,45,0.012))",
+    overlayBg: "rgba(22,30,42,0.42)", scrim: "rgba(252,253,254,0.68)", hi: "#1C2128", lo: "#6E7682", lo2: "#A7AEB8", gold: "#C9A24A", onGold: "#1a1a1a", orb: "bright",
+  },
+  matcha: {
+    pageBg: "#D7DDC8", bg: "#EBEFE0", panel: "#DCE3CC", surface: "#E2E8D6", surface2: "#D6DEC4", modalBg: "#F1F4E9",
+    hair: "rgba(40,52,28,0.10)", hair2: "rgba(40,52,28,0.18)", track: "rgba(40,52,28,0.10)", pip: "rgba(40,52,28,0.3)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(20,30,10,0.06), rgba(20,30,10,0.015))",
+    overlayBg: "rgba(28,34,20,0.45)", scrim: "rgba(235,239,224,0.68)", hi: "#26331C", lo: "#5E6B4E", lo2: "#9FAD8C", gold: "#C9A24A", onGold: "#1a1a1a", orb: "bright",
+  },
+  sakura: {
+    pageBg: "#EBD9DD", bg: "#FBF2F4", panel: "#F4E6E9", surface: "#F7ECEE", surface2: "#F0DFE3", modalBg: "#FFFFFF",
+    hair: "rgba(60,20,32,0.09)", hair2: "rgba(60,20,32,0.16)", track: "rgba(60,20,32,0.09)", pip: "rgba(60,20,32,0.3)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(0,0,0,0.045), rgba(0,0,0,0.012))",
+    overlayBg: "rgba(40,20,26,0.42)", scrim: "rgba(251,242,244,0.66)", hi: "#2E2026", lo: "#8A6E77", lo2: "#C2A8AF", gold: "#C9A24A", onGold: "#1a1a1a", orb: "bright",
+  },
+  sora: {
+    pageBg: "#D7E2EE", bg: "#F1F6FC", panel: "#E5EEF7", surface: "#EAF1F9", surface2: "#DDE8F2", modalBg: "#FFFFFF",
+    hair: "rgba(20,40,64,0.09)", hair2: "rgba(20,40,64,0.16)", track: "rgba(20,40,64,0.09)", pip: "rgba(20,40,64,0.3)",
+    cellGrad: "radial-gradient(circle at 50% 42%, rgba(0,0,0,0.045), rgba(0,0,0,0.012))",
+    overlayBg: "rgba(20,34,50,0.42)", scrim: "rgba(241,246,252,0.66)", hi: "#1E2A36", lo: "#69788A", lo2: "#A3B4C4", gold: "#C9A24A", onGold: "#1a1a1a", orb: "bright",
+  },
+};
+const THEME_ORDER = [["dark", "墨"], ["ai", "藍"], ["budou", "葡萄"], ["light", "雪"], ["matcha", "抹茶"], ["sakura", "桜"], ["sora", "空"]];
+// オーブ描画のプリセット：glass=ごく淡いガラス殻（暗背景用）／bright=明るいパール球（明背景用・影で接地）
+const ORB_GLASS = { tint: [190, 214, 242], rim: "rgba(255,255,255,0.16)", r0: 10, photoScrim: "rgba(8,9,12,0.40)", body: [[0, "rgba(255,255,255,0.05)"], [0.7, "rgba(255,255,255,0.012)"], [1, "rgba(255,255,255,0.04)"]] };
+const ORB_BRIGHT = { tint: [150, 172, 205], rim: "rgba(0,0,0,0.12)", r0: 12, shadow: "rgba(35,40,48,0.18)", photoScrim: "rgba(18,20,26,0.28)", body: [[0, "rgba(255,255,255,0.96)"], [0.5, "rgba(248,250,253,0.88)"], [1, "rgba(226,231,239,0.84)"]] };
+const PAL = [[184, 126, 112], [124, 156, 134], [188, 166, 118], [128, 142, 174], [118, 156, 160], [172, 138, 166]];
+// 達成（半分以上できた日）の習慣セルを塗る金。基準goldより濃く純度の高いマットゴールド。塗りはベタ（つや消し）、光りは btnglow 側で出す
+const GOLD_FILL = [248, 181, 0];
+const HOLD = 1500;
+const DEV = false; // プロト検証用の日送り＆アニメ切替を表示（Web公開時は false）
+// 編集モード中のアイコンの動き（4案）。DEV切替で比較できる
+const EM_ANIMS = { 1: "em1 .2s ease-in-out infinite", 2: "em2 .8s ease-in-out infinite", 3: "em3 .5s ease-in-out infinite", 4: "em4 .3s ease-in-out infinite" };
+const EM_LABELS = { 1: "傾く", 2: "弾む", 3: "縦ゆれ", 4: "ぐらり" };
+const MAX_HABITS = 9; // 1ゴールあたりの習慣の上限
+const MAX_GOALS = 4; // 同時に持てる「なりたい自分」の器の数
+const CX = 160, CY = 158, CR = 116, GRAV = 0.5, REST = 0.26, FRIC = 0.99;
+
+const grainR = (cap) => Math.max(5, Math.min(22, CR * Math.sqrt(0.62 / cap)));
+// 1つのオーブを描く（RAFの本描画と、隣ゴールのスナップショット生成で共用）
+function drawOrb(ctx, bs, R, cap, now, o, img) {
+  o = o || ORB_GLASS;
+  const full = cap > 0 && bs.length >= cap, goldNow = full;
+  ctx.clearRect(0, 0, 320, 300);
+  const fill = Math.min(bs.length / (cap || 1), 1);
+  const tint = goldNow ? [201, 162, 74] : o.tint;
+  const halo = ctx.createRadialGradient(CX, CY, CR * 0.4, CX, CY, CR * 1.5);
+  halo.addColorStop(0, `rgba(${tint.join(",")},${0.05 + fill * 0.12})`); halo.addColorStop(1, `rgba(${tint.join(",")},0)`);
+  ctx.fillStyle = halo; ctx.fillRect(0, 0, 320, 300);
+  if (o.shadow) { const sh = ctx.createRadialGradient(CX, CY + 12, CR * 0.7, CX, CY + 14, CR * 1.16); sh.addColorStop(0, o.shadow); sh.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = sh; ctx.beginPath(); ctx.arc(CX, CY + 12, CR * 1.16, 0, 7); ctx.fill(); }
+  const hasImg = img && img.complete && img.naturalWidth > 0;
+  if (hasImg) {
+    ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.clip();
+    const d = CR * 2, iw = img.naturalWidth, ih = img.naturalHeight, side = Math.min(iw, ih), sx = (iw - side) / 2, sy = (ih - side) / 2;
+    ctx.drawImage(img, sx, sy, side, side, CX - CR, CY - CR, d, d);
+    ctx.fillStyle = o.photoScrim; ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.fill();
+    ctx.restore();
+  } else {
+    const body = ctx.createRadialGradient(CX - 40, CY - 50, o.r0 || 10, CX, CY, CR);
+    for (const st of o.body) body.addColorStop(st[0], st[1]);
+    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.fill();
+  }
+  const bgl = ctx.createRadialGradient(CX, CY + CR * 0.5, 4, CX, CY + CR * 0.5, CR);
+  bgl.addColorStop(0, `rgba(${tint.join(",")},${fill * 0.18})`); bgl.addColorStop(1, `rgba(${tint.join(",")},0)`);
+  ctx.fillStyle = bgl; ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, CR - 0.5, 0, 7); ctx.clip();
+  for (const b of bs) {
+    const [r, g2, bl] = b.c;
+    const gw = ctx.createRadialGradient(b.x, b.y, 0.5, b.x, b.y, R * 2.4);
+    gw.addColorStop(0, `rgba(${r},${g2},${bl},0.2)`); gw.addColorStop(1, `rgba(${r},${g2},${bl},0)`);
+    ctx.fillStyle = gw; ctx.beginPath(); ctx.arc(b.x, b.y, R * 2.4, 0, 7); ctx.fill();
+    const gr = ctx.createRadialGradient(b.x - R * 0.25, b.y - R * 0.3, 0.4, b.x, b.y, R);
+    gr.addColorStop(0, `rgb(${Math.min(r + 30, 255)},${Math.min(g2 + 30, 255)},${Math.min(bl + 30, 255)})`);
+    gr.addColorStop(1, `rgb(${r * 0.84 | 0},${g2 * 0.84 | 0},${bl * 0.84 | 0})`);
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(b.x, b.y, R, 0, 7); ctx.fill();
+    if (now - b.born < 240) { ctx.strokeStyle = "rgba(255,255,255,0.45)"; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(b.x, b.y, R + 1.4, 0, 7); ctx.stroke(); }
+  }
+  ctx.restore();
+  if (o.spec) { const sx = CX - 38, sy = CY - 46, sr = o.specR || 64; const sp = ctx.createRadialGradient(sx, sy, 2, sx, sy, sr); sp.addColorStop(0, o.spec); sp.addColorStop(1, "rgba(255,255,255,0)"); ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, CR - 0.5, 0, 7); ctx.clip(); ctx.fillStyle = sp; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, 7); ctx.fill(); ctx.restore(); }
+  ctx.strokeStyle = goldNow ? "rgba(201,162,74,0.5)" : o.rim; ctx.lineWidth = goldNow ? 1.6 : 1; ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.stroke();
+  if (goldNow) { const pulse = 0.5 + 0.5 * Math.sin(now / 380); const og = ctx.createRadialGradient(CX, CY, CR * 0.85, CX, CY, CR * 1.7); og.addColorStop(0, `rgba(201,162,74,${0.10 + pulse * 0.13})`); og.addColorStop(1, "rgba(201,162,74,0)"); ctx.fillStyle = og; ctx.beginPath(); ctx.arc(CX, CY, CR * 1.7, 0, 7); ctx.fill(); }
+}
+const sectorPath = (cx, cy, r, frac) => {
+  const a0 = -Math.PI / 2, a1 = a0 + frac * 2 * Math.PI;
+  const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+  const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+  return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${frac > 0.5 ? 1 : 0} 1 ${x1} ${y1} Z`;
+};
+// 1日あたりの想定完了数（習慣ペース）
+const pace = (habits) => (habits || []).reduce((s, h) => {
+  const m = h.fmode || "daily", pd = Math.max(1, h.perDay || 1);
+  if (m === "week") return s + (h.perWeek || 3) / 7;
+  if (m === "days") return s + ((h.days || [0, 1, 2, 3, 4, 5, 6]).length / 7) * pd;
+  return s + pd;
+}, 0);
+// 容量＝日数×ペース（習慣が無ければ0）
+const capOf = (g) => g.habits.length ? Math.max(1, Math.round(pace(g.habits) * (g.days || 30))) : 0;
+
+// 履歴(hist)からモード別にストリークを算出（現在/最高）
+const streakInfo = (h, L, day) => {
+  const hist = (L && L.hist) || {};
+  const sd = h.startDay || 0, mode = h.fmode || "daily", pd = Math.max(1, h.perDay || 1);
+  if (mode === "week") {
+    const target = Math.max(1, h.perWeek || 3);
+    const curWk = Math.floor(day / 7), startWk = Math.floor(sd / 7);
+    const daysByWk = {};
+    Object.entries(hist).forEach(([d, c]) => { if (c > 0) { const w = Math.floor(+d / 7); (daysByWk[w] || (daysByWk[w] = new Set())).add(+d); } });
+    const done = (w) => daysByWk[w] ? daysByWk[w].size : 0; // その週にやった日数
+    const curDone = done(curWk), curMet = curDone >= target;
+    const remUsable = (7 - (day % 7)) - ((hist[day] || 0) > 0 ? 1 : 0);
+    const curFeasible = curDone + remUsable >= target; // 今週まだ届くか
+    let cur = 0;
+    if (curMet || curFeasible) { cur += curDone; let w = curWk - 1; while (w >= startWk && done(w) >= target) { cur += done(w); w--; } }
+    let best = 0, run = 0;
+    for (let w = startWk; w <= curWk; w++) {
+      const dw = done(w), met = dw >= target;
+      if (met || (w === curWk && curFeasible)) { run += dw; if (run > best) best = run; }
+      else { run += dw; if (run > best) best = run; run = 0; } // 失敗した週でも、やった日数はベストに算入してから途切れる
+    }
+    if (cur > best) best = cur;
+    return { cur, best, unit: "日" };
+  }
+  const arr = h.days || [0, 1, 2, 3, 4, 5, 6];
+  const sched = mode === "days" ? (d) => arr.includes(((d % 7) + 7) % 7) : () => true;
+  const met = (d) => (hist[d] || 0) >= pd;
+  let cur = 0, d = day;
+  if (sched(day) && !met(day)) d = day - 1;
+  for (; d >= sd; d--) { if (!sched(d)) continue; if (met(d)) cur++; else break; }
+  let best = 0, run = 0;
+  for (let dd = sd; dd <= day; dd++) { if (!sched(dd)) continue; if (met(dd)) { run++; if (run > best) best = run; } else if (!(dd === day && !met(day))) run = 0; }
+  if (cur > best) best = cur;
+  return { cur, best, unit: "日" };
+};
+
+const H = (name, Icon, ci, extra = {}) => ({ name, Icon, c: PAL[ci % PAL.length], ...extra });
+const INIT = [
+  { name: "いい体を作る", days: 18, habits: [H("朝ストレッチ", Dumbbell, 0), H("水をのむ", Droplet, 1, { perDay: 2 }), H("階段を使う", TrendingUp, 2), H("プロテイン", Apple, 0)] },
+  { name: "勉強して脳を鍛える", days: 30, habits: [H("30分読書", BookOpen, 3), H("単語", Pencil, 4), H("復習", Brain, 5), H("集中作業", Coffee, 2, { type: "timed", min: 25 })] },
+  { name: "対人不安を無くす", days: 15, habits: [H("自分から挨拶", MessageCircle, 4), H("感謝を言う", Heart, 0), H("人と話す", Users, 3), H("言い訳をやめる", Smile, 5, { type: "neg" })] },
+];
+const ICONS = [Dumbbell, Droplet, TrendingUp, BookOpen, Pencil, Brain, Coffee, MessageCircle, Heart, Users, Apple, Footprints, Moon, Sun, Star, Smile, Music, Leaf, Bike, Bed, Sparkles, Target, Zap, Trophy, Camera, Briefcase, Utensils, Activity, Wind, Mountain, Globe, Wallet, GraduationCap, Guitar, Carrot, Pill, Sunrise, Waves, Phone, Mail, Smartphone, Gamepad2, Tv, Wine, Cigarette, Bath, ShoppingBag, Palette, Code, Calendar, Flame, Hand, Home, Plane, Flower2, TreePine, PersonStanding, Dog, Cat, Bird, Fish, Rabbit, PawPrint, Bug, Bone, Salad, Sandwich, Pizza, Soup, Beef, Egg, Cherry, Grape, Cookie, IceCream, Cake, Croissant, ChefHat, Milk, Beer, Martini, GlassWater, Library, Newspaper, NotebookPen, PencilLine, PenTool, Highlighter, Languages, School, Lightbulb, Headphones, Mic, Radio, Disc, Drum, Brush, PaintBucket, Film, Clapperboard, Video, Dice5, Puzzle, Laptop, Monitor, Keyboard, Cpu, Tablet, ThumbsUp, Laugh, Award, Medal, Crown, Gift, PartyPopper, HandHeart, Handshake, Speech, MessageSquare, PhoneCall, Send, User, UserPlus, Flower, Sprout, TreeDeciduous, Trees, Sunset, Cloud, Droplets, Snowflake, Sofa, Lamp, ShowerHead, Trash2, Recycle, PiggyBank, CreditCard, Coins, DollarSign, Banknote, LineChart, TrendingDown, ShoppingCart, Store, Package, Car, Bus, TrainFront, Fuel, Anchor, Compass, Flag, Rocket, MapPin, Umbrella, Backpack, Luggage, Glasses, Watch, Gem, Shirt, Scissors, Key, Lock, Battery, Wifi, Power, Bell, AlarmClock, Timer, Hourglass, CalendarCheck, Building, Presentation, Folder, Stethoscope, HeartPulse, Thermometer, Syringe, Eye, Feather, Tent, MountainSnow];
+// 絵文字プリセット（習慣向けによく使うもの）。自由入力もできる
+const EMOJIS = ["🏃","🚶","🏋️","🤸","🧘","🚴","🏊","⛹️","🤾","🤺","🏀","⚽","🎾","🏐","🏓","🥊","💪","🦵","🤳","🧗","🛹","⛸️","🍎","🍌","🍓","🍇","🍊","🍉","🥗","🥦","🥕","🍅","🥑","🌽","🍚","🍙","🍜","🍝","🍞","🥐","🥪","🍳","🥚","🥩","🍗","🐟","🥛","☕","🍵","💧","🧋","🍺","🍷","🥤","🧃","📚","📖","📝","✏️","🖊️","📕","📗","📘","🧠","💡","🎓","🏫","💻","⌨️","🖥️","📱","💼","📅","📊","📈","🗂️","📌","✅","☑️","🔬","🌐","🗣️","🔤","🎨","🖌️","🖍️","🎵","🎶","🎸","🎹","🥁","🎤","🎧","📷","🎬","🎮","🕹️","🧩","♟️","🎲","🎯","🛏️","😴","🚿","🛁","🧹","🗑️","♻️","💊","🩺","🩹","🦷","🧴","🌡️","🧼","❤️","🧡","💛","💚","💙","💜","😊","😄","😌","🥰","👍","⭐","✨","🎉","🏆","🥇","🎁","🙏","🤝","👥","💬","📞","📧","🌱","🌿","🍃","🌳","🌲","🌸","🌻","🌷","🌹","☀️","🌅","🌄","🌙","☁️","🌧️","🌊","💨","❄️","🔥","💰","🐷","💳","🪙","💵","🛍️","🛒","🏪","📦","✈️","🚗","🚆","🚌","🚲","⛵","🐶","🐱","🐦","🐰","🐢","🐾","🐕","🐈","🚭","🚯","📵","⏰","⏳","🔔","🗓️","⌚","🚀","🧭","🗺️","🔑","🔒","☂️","🎒","🧳","👓","💎","👑","✂️","👕","🧦","🦶","🚬","🧺","🪥","📿","🛌","🌞","🌛","🪴","🧎"];
+// 名前からそれらしいアイコン番号を推測（ユーザーが手で選ぶまでの初期提案）。当たらなければ Star(14)
+const ICON_HINTS = [
+  [["泳", "水泳", "プール", "swim"], 37],
+  [["料理", "自炊", "クッキング", "cook"], 26],
+  [["仕事", "業務", "work", "営業", "副業"], 25],
+  [["貯金", "節約", "家計", "投資", "お金", "money"], 31],
+  [["英語", "語学", "外国語", "english", "世界"], 30],
+  [["呼吸", "深呼吸", "breath"], 28],
+  [["登山", "山登り", "ハイキング", "hiking"], 29],
+  [["薬", "サプリ", "服薬", "ビタミン", "supplement"], 35],
+  [["写真", "カメラ", "photo"], 24],
+  [["目標", "ゴール", "target"], 21],
+  [["ギター", "guitar"], 33],
+  [["電話", "tel", "コール", "通話"], 38],
+  [["メール", "mail", "返信"], 39],
+  [["ゲーム", "game"], 41],
+  [["テレビ", "tv", "動画", "youtube", "配信"], 42],
+  [["酒", "ビール", "飲酒", "晩酌", "wine"], 43],
+  [["タバコ", "煙草", "禁煙", "喫煙"], 44],
+  [["風呂", "入浴", "お風呂", "bath", "シャワー"], 45],
+  [["買い物", "買物", "ショッピング", "shopping"], 46],
+  [["絵", "イラスト", "お絵描き", "ペイント"], 47],
+  [["プログラ", "コード", "開発", "code", "コーディング"], 48],
+  [["掃除", "家事", "片付", "整理", "洗濯"], 52],
+  [["旅行", "旅", "travel"], 53],
+  [["歩", "散歩", "walk", "ウォーク"], 11],
+  [["走", "ラン", "ジョグ", "run", "自転車", "バイク", "cycle", "サイクル"], 18],
+  [["筋", "トレ", "運動", "ストレッチ", "体操", "ジム", "gym", "workout", "腕立", "腹筋", "スクワット"], 0],
+  [["水", "飲水", "水分", "白湯"], 1],
+  [["読", "本", "読書", "book"], 3],
+  [["書", "日記", "ノート", "メモ", "write", "ジャーナル"], 4],
+  [["瞑想", "集中", "勉強", "学習", "脳", "study", "復習", "暗記", "単語"], 5],
+  [["コーヒー", "茶", "cafe", "カフェ"], 6],
+  [["挨拶", "話", "会話", "talk", "連絡"], 7],
+  [["感謝", "愛", "好き", "heart", "ありがとう", "褒"], 8],
+  [["人", "友", "family", "友達", "チーム", "仲間"], 9],
+  [["食", "果物", "フルーツ", "野菜", "apple", "eat", "ご飯", "朝食", "昼食", "夕食"], 10],
+  [["寝", "睡眠", "眠", "sleep", "ベッド", "就寝"], 19],
+  [["夜", "月", "moon"], 12],
+  [["朝", "太陽", "sun", "起床", "早起"], 13],
+  [["音楽", "歌", "楽器", "music", "ギター", "ピアノ"], 16],
+  [["自然", "植物", "緑", "庭", "leaf", "草"], 17],
+  [["笑", "ポジティブ", "幸", "smile", "機嫌"], 15],
+  [["成長", "記録", "進捗", "trend", "向上"], 2],
+];
+const guessIcon = (name) => {
+  const n = (name || "").toLowerCase();
+  for (const [keys, idx] of ICON_HINTS) if (keys.some((k) => n.includes(k.toLowerCase()))) return idx;
+  return 14;
+};
+const SWATCHES = [[184, 126, 112], [124, 156, 134], [188, 166, 118], [128, 142, 174], [118, 156, 160], [172, 138, 166], [150, 160, 170], [150, 168, 128], [120, 120, 132]];
+const WD = ["日", "月", "火", "水", "木", "金", "土"];
+const TYPES = [{ id: "pos", lab: "続ける", Icon: Check, desc: "やるたび、ひと粒積もる。続けたい行動" }, { id: "neg", lab: "やめる", Icon: Ban, desc: "我慢できた日に、ひと粒。断ちたい行動" }, { id: "timed", lab: "時間で", Icon: Clock, desc: "決めた時間こなすと、ひと粒" }];
+const FREQS = [{ lab: "毎日", w: 7 }, { lab: "週3", w: 3 }, { lab: "週1", w: 1 }];
+const PERIODS = [{ lab: "3週間", w: 3 }, { lab: "1ヶ月", w: 4 }, { lab: "3ヶ月", w: 13 }, { lab: "半年", w: 26 }];
+
+/* ── リマインダー：ネイティブ通知ブリッジ ──────────────────────────────
+   ネイティブ化（Capacitor / RN webview 等）した際、実機側が時刻通知を鳴らす。
+   実機側は window.TsumikiNative に下記3メソッドを実装するだけでよい：
+     reminderPermission(): Promise<boolean>
+     scheduleReminder({ id:number, key:string, title:string, body:string,
+                        hour:number, minute:number, weekdays:number[] }): Promise<void>
+        ・weekdays は 0=日…6=土。空配列なら毎日。id は同一なら上書き（再スケジュール）。
+     cancelReminder(id:number): Promise<void>
+   ブリッジが無い環境（このプロトタイプ／ブラウザ）では全メソッドが安全に no-op。 */
+const Reminders = {
+  bridge() { try { return (typeof window !== "undefined" && window.TsumikiNative) || null; } catch { return null; } },
+  notifId(key) { let h = 0; for (let i = 0; i < key.length; i++) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0; return (h >>> 0) % 2000000000 + 1; },
+  async permission() { const b = this.bridge(); if (!b?.reminderPermission) return false; try { return !!(await b.reminderPermission()); } catch { return false; } },
+  async schedule(key, { title, body, time, weekdays }) {
+    const b = this.bridge(); if (!b?.scheduleReminder) return;
+    const [hh, mm] = String(time || "08:00").split(":").map((n) => parseInt(n, 10) || 0);
+    try { await b.scheduleReminder({ id: this.notifId(key), key, title, body, hour: hh, minute: mm, weekdays: weekdays || [] }); } catch {}
+  },
+  async cancel(key) { const b = this.bridge(); if (!b?.cancelReminder) return; try { await b.cancelReminder(this.notifId(key)); } catch {} },
+};
+// 習慣1つぶんのリマインダーを、remOn とゴールの状態に合わせて登録/解除する
+const syncReminder = (goal, habit) => {
+  if (!goal || !habit) return;
+  const key = goal.id + ":" + habit.id;
+  if (habit.remOn && !goal.graduated) {
+    const mode = habit.fmode || "daily";
+    const weekdays = mode === "days" ? (habit.days || []) : []; // 毎日/週まとめ は空＝毎日
+    Reminders.schedule(key, { title: goal.name, body: `「${habit.name}」の時間`, time: habit.remTime || "08:00", weekdays });
+  } else {
+    Reminders.cancel(key);
+  }
+};
+
+export default function App() {
+  const [goals, setGoals] = useState(() => SAVED?.goals ? withIds(SAVED.goals) : []); // 初回は空っぽ。サンプルや先入れ粒は持たない
+  const [, setTick] = useState(0); const bump = () => setTick((t) => t + 1); // 粒数の真実は ballsBy。再描画のきっかけだけ持つ
+  const [page, setPage] = useState(0);
+  const [trans, setTrans] = useState(null); // {url, dir} オーブ切替アニメ（矢印用）
+  const [drag, setDrag] = useState(null); // {urls:[prev,cur,next], w} ドラッグ中の重ね表示
+  const [held, setHeld] = useState(-1);
+  const [wiz, setWiz] = useState(null); // {step,name,habits,period,capOver}
+  const [hi, setHi] = useState("");
+  const [editList, setEditList] = useState(false); // ゴール（名前・締切）の編集モーダル
+  const [editMode, setEditMode] = useState(false); // 習慣のインライン編集モード
+  const [editor, setEditor] = useState(null); // {gi, hIndex, draft}
+  const [achieved, setAchieved] = useState(null); // gi of just-completed goal
+  const [collection, setCollection] = useState(() => SAVED?.collection || []);
+  const [showCol, setShowCol] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  // 初回イントロ：まだ見ておらず、かつ保存データが一切ない（＝本当の新規）ときだけ出す
+  const [showIntro, setShowIntro] = useState(() => !SEEN_INTRO && !SAVED);
+  const [introStep, setIntroStep] = useState(0);
+  const [coachSeen, setCoachSeen] = useState(() => SEEN_COACH); // 最初の一粒を積んだら閉じる
+  const dismissIntro = () => { try { localStorage.setItem(INTRO_KEY, "1"); } catch (e) {} setShowIntro(false); };
+  const [theme, setTheme] = useState(() => THEMES[SAVED?.theme] ? SAVED.theme : "dark");
+  const [photos, setPhotos] = useState(() => { try { return JSON.parse(localStorage.getItem("tsumiki:photos") || "{}") || {}; } catch (e) { return {}; } }); // goalId -> dataURL（器の中の写真）
+  const orbImgRef = useRef({}); // goalId -> Image
+  const orbFileRef = useRef(null);
+  const [ioMsg, setIoMsg] = useState("");
+  const importRef = useRef(null);
+  const [colDetail, setColDetail] = useState(null);
+  const [goalDetail, setGoalDetail] = useState(null); // gi of goal whose detail page is open
+  const [now, setNow] = useState(() => todayNum()); // 現実の今日（自動更新）
+  const [dayOffset, setDayOffset] = useState(0); // プロト検証用の日送り（本番では使わない）
+  const day = now + dayOffset;
+  const [logs, setLogs] = useState(() => SAVED?.logs || {}); // "goalId:habitId" -> {day, td, wk, wc, hist...}
+  const [timing, setTiming] = useState(null); // {key, dur, to} active timed task
+  const [goalMgr, setGoalMgr] = useState(false); // 器管理オーバーレイ
+  const [gmConfirm, setGmConfirm] = useState(null); // {gi, name} 削除確認
+  const [gmSnaps, setGmSnaps] = useState([]); // 器管理オーバーレイ用スナップショット
+  const [gmDragFrom, setGmDragFrom] = useState(null); // 器DnD: ドラッグ元スロット
+  const [gmDragTo, setGmDragTo] = useState(null); // 器DnD: ドラッグ先スロット
+  const [hDragFrom, setHDragFrom] = useState(null); // 習慣DnD: ドラッグ元インデックス
+  const [ghost, setGhost] = useState(null); // 習慣ドラッグ中、指に追従する複製 {Icon,name,col,x,y}
+  const T = THEMES[theme];
+  const s = mk(T);
+  const orbPal = T.orb === "bright" ? ORB_BRIGHT : ORB_GLASS;
+  // 器の写真：端末内に別キーで保存。容量対策に長辺720pxへ縮小
+  useEffect(() => { try { localStorage.setItem("tsumiki:photos", JSON.stringify(photos)); } catch (e) {} }, [photos]);
+  // 写真を Image としてプリロード（RAFから即描けるように）
+  useEffect(() => {
+    const cache = orbImgRef.current;
+    Object.keys(photos).forEach((id) => { if (!cache[id] || cache[id]._src !== photos[id]) { const im = new Image(); im._src = photos[id]; im.src = photos[id]; cache[id] = im; } });
+    Object.keys(cache).forEach((id) => { if (!photos[id]) delete cache[id]; });
+    bump();
+  }, [photos]);
+  const onOrbFile = (goalId) => (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 720; let w = img.width, h = img.height; const sc = Math.min(1, max / Math.max(w, h)); w = Math.round(w * sc); h = Math.round(h * sc);
+        try { const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d").drawImage(img, 0, 0, w, h); setPhotos((p) => ({ ...p, [goalId]: c.toDataURL("image/jpeg", 0.82) })); }
+        catch (err) { setPhotos((p) => ({ ...p, [goalId]: rd.result })); }
+      };
+      img.onerror = () => setIoMsg("画像を読めませんでした");
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f); e.target.value = "";
+  };
+  const clearOrbPhoto = (goalId) => setPhotos((p) => { const { [goalId]: _drop, ...rest } = p; return rest; });
+  const comp = (it) => {
+    if (it.hids && it.hids.length) { const m = {}; it.hids.forEach((id) => { m[id] = (m[id] || 0) + 1; }); return (it.habits || []).map((h) => ({ name: h.name, c: h.c, n: m[h.id] || 0 })).sort((a, b) => b.n - a.n); }
+    const m = {}; it.colors.forEach((c) => { const k = c.join(","); m[k] = (m[k] || 0) + 1; }); return (it.habits || []).map((h) => ({ name: h.name, c: h.c, n: m[h.c.join(",")] || 0 })).sort((a, b) => b.n - a.n);
+  };
+  const habitStatus = (gi, hi) => {
+    const h = goals[gi].habits[hi]; const perDay = Math.max(1, h.perDay || 1);
+    const wk = Math.floor(day / 7), wd = ((day % 7) + 7) % 7;
+    const L = logs[goals[gi].id + ":" + h.id] || { day: -1, td: 0, wk: -1, wc: 0 };
+    const td = L.day === day ? L.td : 0; const wc = L.wk === wk ? L.wc : 0;
+    const mode = h.fmode || "daily";
+    // ok=今日まだ積める / done=今日のぶんは済んだ / off=今日は対象外。allClear はこの3状態で見る
+    if (mode === "days") {
+      if (!(h.days || [0, 1, 2, 3, 4, 5, 6]).includes(wd)) return { ok: false, off: true, label: "今日は対象外" };
+      return td >= perDay ? { ok: false, done: true, label: "今日完了 ✓" } : { ok: true };
+    }
+    if (mode === "week") {
+      const pw = Math.max(1, h.perWeek || 3);
+      if (wc >= pw) return { ok: false, done: true, label: `今週 ${wc}/${pw}` }; // 今週ノルマ達成＝今日のぶんは満たされている
+      if (td >= 1) return { ok: false, done: true, label: "今日完了 ✓" };
+      return { ok: true, label: `今週 ${wc}/${pw}` };
+    }
+    return td >= perDay ? { ok: false, done: true, label: perDay > 1 ? `今日 ${td}/${perDay}` : "今日完了 ✓" } : { ok: true };
+  };
+
+  const canvasRef = useRef(null);
+  const stageRef = useRef(null), trackRef = useRef(null); // ドラッグ追従カルーセル
+  const dragRef = useRef(null); // 進行中ドラッグの生データ（再描画を避けるためref）
+  const ballsBy = useRef({});
+  const orbRef = useRef(orbPal);
+  const goalsRef = useRef(goals), pageRef = useRef(0);
+  const audio = useRef(null), sweep = useRef(null), timer = useRef(null);
+  const allClearRef = useRef(false), lastClear = useRef(false);
+  const simState = useRef({}); // goalId -> { active: framesLeft, calm: calmFrames }
+  const dotHoldRef = useRef(null); // dotsバー長押しタイマー
+  const hHoldRef = useRef(null); // 習慣長押しタイマー
+  const gmItemRefs = useRef([]); // 器管理オーバーレイのスロットref
+  const habitCellRefs = useRef({}); // habitId -> セル要素（座標ヒット判定・FLIP用）
+  const flipPrevRef = useRef({}); // habitId -> 直前のrect（FLIPアニメ用）
+  const hDragFromRef = useRef(null); // 習慣DnD現在地（即時）
+  const ghostRef = useRef(null); // ドラッグゴースト要素（位置をref直更新）
+  const lastSwapRef = useRef(0); // 直近の入れ替え時刻（FLIP中の誤判定を防ぐ）
+  const gmDragFromRef = useRef(null); // 器DnD元（即時）
+  const gmDragToRef = useRef(null); // 器DnD先（即時）
+  const wake = (key) => { simState.current[key] = { active: 360, calm: 0 }; }; // 落ちて沈むまで動かす上限
+
+  useEffect(() => { goalsRef.current = goals; }, [goals]);
+  // 端末内へ自動保存（デバウンス）。粒の位置は保存せず、構成(hid列)だけ残す
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const orbs = {}; goals.forEach((go) => { orbs[go.id] = (ballsBy.current[go.id] || []).map((b) => b.hid); });
+      safeSave({ v: SCHEMA, goals: serializeGoals(goals), logs, collection, orbs, theme });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [goals, logs, collection, theme]);
+  // 実日付の追従：日跨ぎ（深夜0時）とアプリ復帰で「今日」を更新
+  useEffect(() => {
+    const sync = () => setNow(todayNum());
+    const id = setInterval(sync, 60000);
+    const onVis = () => { if (!document.hidden) sync(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", sync);
+    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", sync); };
+  }, []);
+
+  // 起動時：保存済みのリマインダーを実機に再登録（ネイティブが無ければ no-op）
+  useEffect(() => {
+    const run = () => goals.forEach((g) => g.habits.forEach((h) => syncReminder(g, h)));
+    if (goals.some((g) => !g.graduated && g.habits.some((h) => h.remOn))) Reminders.permission().finally(run); else run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // seed balls for a goal
+  const seed = (gi, n) => {
+    const g = goalsRef.current[gi]; const R = grainR(capOf(g)); const arr = [];
+    for (let i = 0; i < n; i++) {
+      const a = (Math.random() - 0.5) * 2.4, rr = (CR - R) * (0.5 + Math.random() * 0.45);
+      const hb = g.habits[i % g.habits.length];
+      arr.push({ x: CX + Math.sin(a) * rr * 0.6, y: CY + Math.cos(a) * rr * 0.7, vx: 0, vy: 0, c: hb.c, hid: hb.id, born: 0 });
+    }
+    ballsBy.current[g.id] = arr;
+    wake(g.id);
+  };
+  // 保存された粒構成（hidの配列）からオーブを復元。位置はランダム再生成
+  const seedFrom = (goal, hids) => {
+    const R = grainR(capOf(goal)); const byId = {}; goal.habits.forEach((h) => { byId[h.id] = h.c; });
+    ballsBy.current[goal.id] = (hids || []).map((hid) => {
+      const a = (Math.random() - 0.5) * 2.4, rr = (CR - R) * (0.5 + Math.random() * 0.45);
+      return { x: CX + Math.sin(a) * rr * 0.6, y: CY + Math.cos(a) * rr * 0.7, vx: 0, vy: 0, c: byId[hid] || [150, 150, 150], hid, born: 0 };
+    });
+    wake(goal.id);
+  };
+  // ゴールのオーブを画像化（隣のゴールをドラッグ中に並べて見せる用）
+  const snapshotGoal = (goal) => {
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const oc = document.createElement("canvas"); oc.width = 320 * dpr; oc.height = 300 * dpr;
+      const octx = oc.getContext("2d"); octx.scale(dpr, dpr);
+      const bs = ballsBy.current[goal.id] || [], cap = capOf(goal);
+      drawOrb(octx, bs, grainR(cap || 30), cap, performance.now(), orbPal, orbImgRef.current[goal.id]);
+      return oc.toDataURL();
+    } catch (e) { return null; }
+  };
+  // 空の器（まだゴールが無いスロット）を画像化
+  const snapshotEmpty = () => {
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const oc = document.createElement("canvas"); oc.width = 320 * dpr; oc.height = 300 * dpr;
+      const octx = oc.getContext("2d"); octx.scale(dpr, dpr);
+      drawOrb(octx, [], grainR(30), 0, performance.now(), orbPal);
+      return oc.toDataURL();
+    } catch (e) { return null; }
+  };
+
+  useEffect(() => {
+    if (SAVED?.orbs) goalsRef.current.forEach((goal) => seedFrom(goal, SAVED.orbs[goal.id]));
+    else goalsRef.current.forEach((goal) => { ballsBy.current[goal.id] ||= []; }); // 先入れ無し：粒は実際にやった分だけ
+    bump();
+    const cv = canvasRef.current, ctx = cv.getContext("2d"), dpr = window.devicePixelRatio || 1;
+    cv.width = 320 * dpr; cv.height = 300 * dpr; ctx.scale(dpr, dpr);
+    let raf;
+    const step = () => {
+      const gi = pageRef.current, g = goalsRef.current[gi];
+      const ctx2 = cv.getContext("2d");
+      if (gi < 0 || !g) { drawOrb(ctx, [], grainR(30), 0, performance.now(), orbRef.current); raf = requestAnimationFrame(step); return; }
+      const cap = capOf(g);
+      const R = grainR(cap || 30), bs = ballsBy.current[g.id] || [];
+      const sim = simState.current[g.id] || (simState.current[g.id] = { active: 360, calm: 0 });
+      if (sim.active > 0) {
+      for (const b of bs) {
+        b.vy += GRAV; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
+        const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01;
+        if (d + R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - R); b.y = CY + ny * (CR - R); const vn = b.vx * nx + b.vy * ny; b.vx -= (1 + REST) * vn * nx; b.vy -= (1 + REST) * vn * ny; }
+      }
+      for (let it = 0; it < 3; it++) for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
+        const a = bs[i], b = bs[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, ov = 2 * R - d;
+        if (ov > 0) { const nx = dx / d, ny = dy / d, p = ov / 2; a.x -= nx * p; a.y -= ny * p; b.x += nx * p; b.y += ny * p; const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny; if (vn < 0) { const imp = -(1 + REST) * vn / 2; a.vx -= imp * nx; a.vy -= imp * ny; b.vx += imp * nx; b.vy += imp * ny; } }
+      }
+      let maxV2 = 0; for (const b of bs) { const v2 = b.vx * b.vx + b.vy * b.vy; if (v2 > maxV2) maxV2 = v2; }
+      sim.active--;
+      if (maxV2 < 0.03) { if (++sim.calm > 18) sim.active = 0; } else sim.calm = 0; // 静かになったら早めに眠る
+      }
+      drawOrb(ctx, bs, R, cap, performance.now(), orbRef.current, orbImgRef.current[g.id]);
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // ---- audio (locked: Early Bird) ----
+  const ensure = () => { if (!audio.current) audio.current = new (window.AudioContext || window.webkitAudioContext)(); if (audio.current.state === "suspended") audio.current.resume(); return audio.current; };
+  const noiseBuf = (a) => { const len = a.sampleRate * 2, b = a.createBuffer(1, len, a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; return b; };
+  const startSimmer = () => {
+    const a = ensure(), t0 = a.currentTime, Tm = HOLD / 1000;
+    const src = a.createBufferSource(); src.buffer = noiseBuf(a); src.loop = true;
+    const bp = a.createBiquadFilter(); bp.type = "bandpass"; bp.Q.setValueAtTime(7, t0);
+    bp.frequency.setValueAtTime(250, t0); bp.frequency.exponentialRampToValueAtTime(4000, t0 + Tm);
+    const g = a.createGain(); g.gain.setValueAtTime(0.02, t0); g.gain.linearRampToValueAtTime(0.12, t0 + Tm);
+    src.connect(bp); bp.connect(g); g.connect(a.destination); src.start(); sweep.current = { src, g };
+  };
+  const stopSimmer = (fade = 0.05) => {
+    if (!sweep.current) return; const a = audio.current, { src, g } = sweep.current;
+    g.gain.cancelScheduledValues(a.currentTime); g.gain.setValueAtTime(g.gain.value, a.currentTime);
+    g.gain.linearRampToValueAtTime(0.0001, a.currentTime + fade); try { src.stop(a.currentTime + fade + 0.03); } catch (e) {} sweep.current = null;
+  };
+  const chime = () => { const a = ensure(), t = a.currentTime;
+    [[1046.50, 0, 0.08], [1318.51, 0.06, 0.25], [1567.98, 0.14, 0.45]].forEach(([f, dl, st]) => {
+      const o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.setValueAtTime(f, t + dl);
+      g.gain.setValueAtTime(0, t); g.gain.setValueAtTime(0.05, t + dl); g.gain.exponentialRampToValueAtTime(0.001, t + st);
+      o.connect(g); g.connect(a.destination); o.start(t + dl); o.stop(t + st);
+    });
+  };
+  // 達成：ふくよかに解決する和音
+  const achChord = () => {
+    const a = ensure(), t = a.currentTime;
+    [523.25, 659.25, 783.99, 1046.50, 1318.51].forEach((f, i) => {
+      const o = a.createOscillator(), g = a.createGain(); o.type = i < 2 ? "sine" : "triangle"; o.frequency.value = f;
+      const t0 = t + i * 0.09, dur = 1.7; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.1, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0004, t0 + dur); o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+    });
+    const o2 = a.createOscillator(), g2 = a.createGain(); o2.type = "sine"; o2.frequency.value = 130.81;
+    g2.gain.setValueAtTime(0.0001, t); g2.gain.linearRampToValueAtTime(0.08, t + 0.06); g2.gain.exponentialRampToValueAtTime(0.0004, t + 2.0);
+    o2.connect(g2); g2.connect(a.destination); o2.start(t); o2.stop(t + 2.1);
+  };
+  // 今日のぶん完了：やわらかな金のピン
+  const goldPing = () => {
+    const a = ensure(), t = a.currentTime;
+    [783.99, 1174.66].forEach((f, i) => {
+      const o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.value = f;
+      const t0 = t + i * 0.09; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.06, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.6);
+      o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + 0.65);
+    });
+  };
+
+  const addGrain = (gi, i) => {
+    const g = goalsRef.current[gi], cap = capOf(g); if (cap && (ballsBy.current[g.id]?.length || 0) >= cap) return;
+    if (!coachSeen) { setCoachSeen(true); try { localStorage.setItem(COACH_KEY, "1"); } catch (e) {} } // 初めての長押し＝案内を閉じる
+    const R = grainR(cap || 30); const hb = g.habits[i];
+    (ballsBy.current[g.id] ||= []).push({ x: CX + (Math.random() - 0.5) * 24, y: CY - CR + R + 6, vx: (Math.random() - 0.5) * 1, vy: 1.4, c: hb.c, hid: hb.id, born: performance.now() });
+    wake(g.id);
+    bump();
+    setLogs((m) => { const k = g.id + ":" + hb.id; const wk = Math.floor(day / 7); const L = m[k] || { day: -1, td: 0, wk: -1, wc: 0, hist: {} }; const td = L.day === day ? L.td : 0; const wc = L.wk === wk ? L.wc : 0; const hist = { ...(L.hist || {}), [day]: ((L.hist || {})[day] || 0) + 1 }; return { ...m, [k]: { day, td: td + 1, wk, wc: wc + 1, hist } }; });
+    if (cap && ballsBy.current[g.id].length >= cap) setTimeout(() => {
+      achChord(); navigator.vibrate?.([20, 60, 30, 60, 120]);
+      const gg = goalsRef.current[gi];
+      setCollection((col) => col.some((c) => c.name === gg.name) ? col : [...col, { name: gg.name, capacity: capOf(gg), date: new Date().toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" }), habits: gg.habits.map((h) => ({ name: h.name, c: h.c, id: h.id })), colors: (ballsBy.current[gg.id] || []).map((b) => b.c), hids: (ballsBy.current[gg.id] || []).map((b) => b.hid) }]);
+      setAchieved(gi);
+    }, 520);
+  };
+
+  const down = (i) => (e) => {
+    e.preventDefault(); if (held !== -1) return;
+    const gi = pageRef.current; const g = goalsRef.current[gi]; const capD = capOf(g);
+    if (capD && (ballsBy.current[g.id]?.length || 0) >= capD) return; // full
+    if (!habitStatus(gi, i).ok) return; // daily/weekly rule
+    setHeld(i); startSimmer();
+    timer.current = setTimeout(() => {
+      stopSimmer(0.02); chime(); navigator.vibrate?.([7, 16, 11]);
+      addGrain(gi, i);
+      setHeld(-1); timer.current = null;
+    }, HOLD);
+  };
+  // timed task: tap to run a timer, grain on completion (demo-compressed)
+  const startTimer = (i) => {
+    const gi = pageRef.current, g = goalsRef.current[gi], key = g.id + ":" + g.habits[i].id;
+    if (timing && timing.key === key) { clearTimeout(timing.to); setTiming(null); return; } // cancel
+    if (timing) return; // another timer running
+    if (!habitStatus(gi, i).ok) return;
+    ensure();
+    const mins = Math.max(1, goalsRef.current[gi].habits[i].min || 5);
+    const dur = Math.min(Math.max(mins * 0.2, 1.5), 6) * 1000; // demo speed
+    const to = setTimeout(() => { chime(); navigator.vibrate?.([7, 16, 11]); addGrain(gi, i); setTiming(null); }, dur);
+    setTiming({ key, dur, to });
+  };
+  const up = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; stopSimmer(); } setHeld(-1); };
+
+  const addHabit = () => {
+    const name = hi.trim(); if (!name) return;
+    setWiz((w) => ({ ...w, capOver: null, habits: [...w.habits, { name, Icon: ICONS[w.habits.length % ICONS.length], c: PAL[w.habits.length % PAL.length], f: 0 }] }));
+    setHi("");
+  };
+  const cycleFreq = (i) => setWiz((w) => ({ ...w, capOver: null, habits: w.habits.map((h, k) => k === i ? { ...h, f: (h.f + 1) % FREQS.length } : h) }));
+  const removeHabit = (i) => setWiz((w) => ({ ...w, capOver: null, habits: w.habits.filter((_, k) => k !== i) }));
+  const createGoal = (cap) => {
+    const ng = { id: uid(), name: wiz.name.trim(), days: Math.max(1, cap | 0), habits: [] };
+    const idx = goals.length, newPos = activeIdx.length; // idx=goals内番号(editor用)、newPos=スロット位置(末尾)
+    setGoals((g) => [...g, ng]); ballsBy.current[ng.id] = [];
+    setTimeout(() => setPage(newPos), 30);
+    setWiz((w) => ({ ...w, step: 2, newIdx: idx })); // 作成完了。続けて最初の習慣を追加するか聞く
+  };
+
+  // ---- habit editor ----
+  const blankDraft = (habitCount = 0) => ({ name: "", iconIdx: 14, iconAuto: true, emoji: "", colorIdx: habitCount % SWATCHES.length, type: "pos", min: 10, perDay: 1, fmode: "daily", days: [0, 1, 2, 3, 4, 5, 6], perWeek: 3, remOn: false, remTime: "08:00", url: "" });
+  const habitToDraft = (h, gi) => {
+    const ii = ICONS.indexOf(h.Icon); const ci = SWATCHES.findIndex((c) => c[0] === h.c[0] && c[1] === h.c[1] && c[2] === h.c[2]);
+    return { name: h.name, iconIdx: ii < 0 ? 0 : ii, iconAuto: false, emoji: h.emoji || "", colorIdx: ci < 0 ? 0 : ci, type: h.type || "pos", min: h.min || 10, perDay: h.perDay || 1, fmode: h.fmode || "daily", days: h.days || [0, 1, 2, 3, 4, 5, 6], perWeek: h.perWeek || 3, remOn: h.remOn || false, remTime: h.remTime || "08:00", url: h.url || "" };
+  };
+  const openAdd = () => { if (curGi < 0 || goals[curGi].habits.length >= MAX_HABITS) return; setEditor({ gi: curGi, hIndex: -1, draft: blankDraft(goals[curGi].habits.length) }); };
+  const openEdit = (i) => setEditor({ gi: curGi, hIndex: i, draft: habitToDraft(goals[curGi].habits[i], curGi), detailOpen: true });
+  const setD = (patch) => setEditor((e) => ({ ...e, draft: { ...e.draft, ...patch } }));
+  const saveHabit = () => {
+    const d = editor.draft; if (!d.name.trim()) return;
+    const base = { name: d.name.trim(), Icon: ICONS[d.iconIdx], emoji: d.emoji || "", c: SWATCHES[d.colorIdx], type: d.type, min: d.min, perDay: d.perDay, fmode: d.fmode, days: d.days, perWeek: d.perWeek, remOn: d.remOn, remTime: d.remTime, url: d.url };
+    const goal = goals[editor.gi];
+    const existing = editor.hIndex >= 0 ? goal.habits[editor.hIndex] : null;
+    const saved = { ...base, id: existing ? existing.id : uid(), startDay: existing ? (existing.startDay ?? 0) : day };
+    setGoals((gs) => gs.map((g, gi) => gi !== editor.gi ? g : { ...g, habits: existing ? g.habits.map((x, k) => k === editor.hIndex ? saved : x) : [...g.habits, saved] }));
+    if (saved.remOn) Reminders.permission().finally(() => syncReminder(goal, saved)); else syncReminder(goal, saved);
+    setEditor(null);
+  };
+  const deleteHabit = () => {
+    if (editor.hIndex < 0) { setEditor(null); return; }
+    const goal = goals[editor.gi]; const hb = goal.habits[editor.hIndex];
+    if (hb) { // 残骸掃除：その習慣の粒と記録を消す
+      const bs = ballsBy.current[goal.id]; if (bs) ballsBy.current[goal.id] = bs.filter((b) => b.hid !== hb.id);
+      setLogs((m) => { const { [goal.id + ":" + hb.id]: _drop, ...rest } = m; return rest; });
+      Reminders.cancel(goal.id + ":" + hb.id);
+      wake(goal.id);
+    }
+    setGoals((gs) => gs.map((g, gi) => gi !== editor.gi ? g : { ...g, habits: g.habits.filter((_, k) => k !== editor.hIndex) }));
+    setEditor(null);
+  };
+  const moveHabit = (i, dir) => {
+    const j = i + dir; const hs = goals[curGi].habits; if (j < 0 || j >= hs.length) return;
+    setGoals((gs) => gs.map((g, gi) => { if (gi !== curGi) return g; const a = [...g.habits];[a[i], a[j]] = [a[j], a[i]]; return { ...g, habits: a }; }));
+  };
+
+  const openWizard = () => setWiz({ step: 0, name: "", days: 30 });
+  const graduate = (gi) => {
+    const gg = goals[gi]; if (gg) gg.habits.forEach((h) => Reminders.cancel(gg.id + ":" + h.id)); // 達成したら通知も止める
+    setGoals((gs) => gs.map((x, k) => k === gi ? { ...x, graduated: true } : x));
+    setPage(0);
+  };
+
+  // ── バックアップ：全データをJSONで書き出し／読み込み ──
+  const buildSave = () => { const orbs = {}; goals.forEach((go) => { orbs[go.id] = (ballsBy.current[go.id] || []).map((b) => b.hid); }); return { v: SCHEMA, goals: serializeGoals(goals), logs, collection, orbs, theme, photos, exportedAt: new Date().toISOString() }; };
+  const exportData = () => {
+    try {
+      const blob = new Blob([JSON.stringify(buildSave())], { type: "application/json" });
+      const url = URL.createObjectURL(blob); const a = document.createElement("a");
+      a.href = url; a.download = `tsumiki-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setIoMsg("書き出しました");
+    } catch (e) { setIoMsg("書き出せませんでした"); }
+  };
+  const applyImport = (raw) => {
+    let d; try { d = migrate(JSON.parse(raw)); } catch (e) { setIoMsg("ファイルを読めませんでした"); return; }
+    if (!d || !Array.isArray(d.goals)) { setIoMsg("中身が見つかりませんでした"); return; }
+    if ((goals.length || collection.length) && !window.confirm("いまの記録を、読み込んだ内容で置き換えます。よろしいですか？")) return;
+    // 既存の通知を一旦全解除
+    goals.forEach((g) => g.habits.forEach((h) => Reminders.cancel(g.id + ":" + h.id)));
+    const gs = withIds(d.goals);
+    setGoals(gs); setLogs(d.logs || {}); setCollection(Array.isArray(d.collection) ? d.collection : []);
+    if (d.theme && THEMES[d.theme]) setTheme(d.theme);
+    setPhotos(d.photos && typeof d.photos === "object" ? d.photos : {});
+    ballsBy.current = {}; gs.forEach((goal) => seedFrom(goal, (d.orbs || {})[goal.id]));
+    gs.forEach((goal) => goal.habits.forEach((h) => syncReminder(goal, h)));
+    setPage(0); bump();
+    setIoMsg("読み込みました"); setShowSettings(false);
+  };
+  const onImportFile = (e) => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => applyImport(r.result); r.onerror = () => setIoMsg("ファイルを読めませんでした"); r.readAsText(f); e.target.value = ""; };
+
+  const activeIdx = goals.map((x, i) => i).filter((i) => !goals[i].graduated);
+  const hasActive = activeIdx.length > 0;
+  // 4つの器スロット：実ゴールを先頭から詰め、残りは空き（＋）
+  const slots = Array.from({ length: MAX_GOALS }, (_, i) => i < activeIdx.length ? { type: "goal", gi: activeIdx[i] } : { type: "add" });
+  const slotPos = Math.min(Math.max(page, 0), MAX_GOALS - 1); // page はスロット位置(0..3)
+  const cur = slots[slotPos];
+  const curGi = cur.type === "goal" ? cur.gi : -1;
+  const onAdd = cur.type === "add";
+  // 空きスロットの文言：手持ちが空なら初回と同じ案内、ゴールを持っていて足すときだけ別
+  const addKind = hasActive ? "more" : "first";
+  const hasGoal = curGi >= 0;
+  useEffect(() => { if (page !== slotPos) setPage(slotPos); }, [page, slotPos]);
+  useEffect(() => { setEditMode(false); }, [curGi]); // 別のゴールに移ったら編集モードは閉じる
+  // 器管理オーバーレイ：開いている間、並び替え・削除のたびにサムネを更新
+  useEffect(() => { if (goalMgr) setGmSnaps(slots.map((slot) => slotSnap(slot))); /* eslint-disable-next-line */ }, [goals, goalMgr]);
+  // 器が全部無くなったら管理オーバーレイは閉じる
+  useEffect(() => { if (goalMgr && activeIdx.length === 0) setGoalMgr(false); /* eslint-disable-next-line */ }, [activeIdx.length, goalMgr]);
+  pageRef.current = curGi;
+  orbRef.current = orbPal;
+
+  const g = hasGoal ? goals[curGi] : null;
+  const cnt = hasGoal ? (ballsBy.current[g?.id]?.length || 0) : 0;
+  const cap = hasGoal ? capOf(g) : 0;
+  const full = cap > 0 && cnt >= cap;
+  const RR = 33, CIRC = 2 * Math.PI * RR;
+  // 習慣の並び替えを滑らかに：旧位置→新位置の差分を一度だけ打ち消して、transitionで戻す（FLIP）
+  const habitOrderSig = g ? g.habits.map((h) => h.id).join(",") : "";
+  useLayoutEffect(() => {
+    const cells = habitCellRefs.current, prev = flipPrevRef.current, next = {};
+    const draggingId = (g && hDragFromRef.current !== null) ? g.habits[hDragFromRef.current]?.id : null;
+    Object.keys(cells).forEach((id) => { const el = cells[id]; if (el && el.isConnected) next[id] = el.getBoundingClientRect(); });
+    Object.entries(next).forEach(([id, r]) => {
+      if (id === draggingId) return; // 掴み中のセルはゴーストで表現するのでFLIPしない
+      const p = prev[id]; if (!p) return;
+      const dx = p.left - r.left, dy = p.top - r.top;
+      if (!dx && !dy) return;
+      const el = cells[id]; if (!el) return;
+      el.style.transition = "none";
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      requestAnimationFrame(() => { el.style.transition = "transform .22s cubic-bezier(.2,.8,.3,1)"; el.style.transform = ""; });
+    });
+    flipPrevRef.current = next;
+  }, [habitOrderSig]);
+  const slotSnap = (slot) => slot.type === "goal" ? snapshotGoal(goals[slot.gi]) : snapshotEmpty();
+  const goRel = (d) => {
+    if (trans) return;
+    try { const url = canvasRef.current?.toDataURL(); if (url) setTrans({ url, dir: d }); } catch (e) {}
+    setPage((p) => (Math.min(Math.max(p, 0), MAX_GOALS - 1) + d + MAX_GOALS) % MAX_GOALS);
+  };
+  // 器管理オーバーレイを開く（dotsバーの長押し）
+  const openGoalMgr = () => {
+    setGmSnaps(slots.map((slot) => slotSnap(slot)));
+    setGoalMgr(true);
+  };
+  // 器の削除（実処理）。確認はアプリ内ダイアログ側で行う
+  const deleteGoalAt = (gi) => {
+    const goal = goals[gi]; if (!goal) return;
+    goal.habits.forEach((h) => Reminders.cancel(goal.id + ":" + h.id));
+    delete ballsBy.current[goal.id];
+    const prefix = goal.id + ":";
+    setLogs((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith(prefix))));
+    setGoals((gs) => gs.filter((_, k) => k !== gi));
+    setPage(0);
+  };
+  // 器の順序入れ替え（スロット番号で指定）
+  const swapGoalSlots = (fromSlot, toSlot) => {
+    const fi = activeIdx[fromSlot], ti = activeIdx[toSlot];
+    if (fi === undefined || ti === undefined || fi === ti) return;
+    setGoals((gs) => { const a = [...gs]; [a[fi], a[ti]] = [a[ti], a[fi]]; return a; });
+  };
+  // 習慣の順序入れ替え（インデックスで指定）
+  const swapHabits = (from, to) => {
+    if (from === to || from == null || to == null) return;
+    setGoals((gs) => gs.map((g, gi) => {
+      if (gi !== curGi) return g;
+      const a = [...g.habits]; [a[from], a[to]] = [a[to], a[from]]; return { ...g, habits: a };
+    }));
+  };
+  // オーブを左右にドラッグ＝指に追従して隣のスロットが見える。離した方向にスナップ
+  const onStageDown = (e) => { dragRef.current = { active: true, decided: null, startX: e.clientX, startY: e.clientY, x: 0 }; };
+  const onStageMove = (e) => {
+    const dr = dragRef.current; if (!dr || !dr.active) return;
+    const dx = e.clientX - dr.startX, dy = e.clientY - dr.startY;
+    if (dr.decided == null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) >= Math.abs(dx) || MAX_GOALS < 2) { dr.decided = "v"; return; }
+      const prevPos = (slotPos - 1 + MAX_GOALS) % MAX_GOALS;
+      const nextPos = (slotPos + 1) % MAX_GOALS;
+      const w = stageRef.current?.getBoundingClientRect().width || 320;
+      const urls = [slotSnap(slots[prevPos]), slotSnap(slots[slotPos]), slotSnap(slots[nextPos])];
+      if (urls.some((u) => !u)) { dr.decided = "v"; return; } // 画像化できない環境はドラッグ無効
+      dr.decided = "h"; dr.w = w; dr.prevPos = prevPos; dr.nextPos = nextPos;
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+      setDrag({ urls, w });
+      return;
+    }
+    if (dr.decided === "h" && trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + (dr.x = dx)}px)`;
+  };
+  const onStageUp = () => {
+    const dr = dragRef.current; dragRef.current = null;
+    if (!dr || dr.decided !== "h") return;
+    const w = dr.w, x = dr.x || 0, tr = trackRef.current;
+    const commit = x < -w * 0.22 ? 1 : x > w * 0.22 ? -1 : 0; // 22%超で確定
+    const finish = () => { if (commit === 1) setPage(dr.nextPos); else if (commit === -1) setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
+    if (tr) {
+      tr.style.transition = "transform .28s cubic-bezier(.22,1,.3,1)";
+      tr.style.transform = `translateX(${commit === 1 ? -2 * w : commit === -1 ? 0 : -w}px)`;
+      let done = false; const h = () => { if (done) return; done = true; tr.removeEventListener("transitionend", h); finish(); };
+      tr.addEventListener("transitionend", h); setTimeout(h, 380);
+    } else finish();
+  };
+  const onStageCancel = () => { if (dragRef.current?.decided === "h") { dragRef.current = null; setDrag(null); } else dragRef.current = null; };
+  // 今日の各習慣の状態。week=週◯回（毎日は強制しない）、それ以外＝毎日・曜日（今日やるべき必須枠）
+  const todayStatuses = hasGoal ? g.habits.map((h, i) => ({ st: habitStatus(curGi, i), week: (h.fmode || "daily") === "week" })) : [];
+  const reqOpen = todayStatuses.some(({ st, week }) => st.ok && !week); // 毎日・曜日に未完が残っている
+  const activeCount = todayStatuses.filter(({ st }) => !st.off).length; // 今日対象の習慣数（曜日で対象外のものは除く）
+  const need = Math.round(activeCount / 2); // 半分（四捨五入）はこなす
+  const doneCount = todayStatuses.filter(({ st }) => st.done).length; // 今日のぶんを済ませた数
+  // 金色＝必須(毎日・曜日)を全部やったうえで、今日対象の習慣の半分以上をこなした
+  const allClear = hasGoal && !full && activeCount > 0 && !reqOpen && doneCount >= need;
+  allClearRef.current = allClear || full;
+  // 最初の長押し案内：まだ一度も積んでおらず、今日押せる習慣があり、器が空のときだけ
+  const showCoach = !coachSeen && !showIntro && hasGoal && cnt === 0 && g.habits.some((h, i) => habitStatus(curGi, i).ok);
+  useEffect(() => { if (allClear && !lastClear.current) goldPing(); lastClear.current = allClear; }, [allClear]);
+
+  // 習慣数で各部の余白・フォントを段階的に縮める（編集中は追加セルぶん+1として詰める）
+  const hc = hasGoal ? g.habits.length : 0;
+  const hcEff = hc + (editMode && hc < MAX_HABITS ? 1 : 0); // レイアウト計算用の実効セル数
+  const compact = hcEff >= 7 ? 2 : hcEff >= 4 ? 1 : 0; // 0=通常 1=中 2=詰め
+  const screenGap = compact === 2 ? 4 : compact === 1 ? 7 : 10;
+  const idNameSize = compact === 2 ? 18 : compact === 1 ? 20 : 24;
+  const idNameMT = compact === 2 ? 2 : compact === 1 ? 3 : 6;
+  const idBlockPT = compact >= 1 ? 0 : 2;
+
+  return (
+    <div className="tsumiki-app" style={s.page} onContextMenu={(e) => e.preventDefault()}>
+      <style>{KEY}</style>
+      <div style={{ ...s.screen, gap: screenGap, padding: compact === 2 ? "10px 20px 14px" : compact === 1 ? "13px 20px 16px" : "16px 20px 18px", touchAction: "none" }} onPointerDown={onStageDown} onPointerMove={onStageMove} onPointerUp={onStageUp} onPointerCancel={onStageCancel}>
+        <div style={s.bar}>
+          <span style={s.wordmark}>TSUMIKI</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button style={s.colBtn} onClick={() => setShowCol(true)}>✦ {collection.length}</button>
+            <button style={s.iconBtn} aria-label="設定" onClick={() => { setIoMsg(""); setShowSettings(true); }}><Settings size={17} color={T.lo} strokeWidth={2} /></button>
+          </div>
+        </div>
+
+        <div style={{ ...s.idBlock, paddingTop: idBlockPT }}>
+          {hasGoal ? (<>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={s.idLabel}>なりたい自分</div>
+              <div key={g.id} style={{ ...s.idName, fontSize: idNameSize, marginTop: idNameMT, color: full ? T.gold : T.hi, animation: "achfade .3s ease" }}>{g.name}{full ? "（なれた）" : ""}</div>
+            </div>
+            <button style={s.analyzeBtn} onClick={() => setGoalDetail(curGi)} aria-label="分析"><BarChart3 size={16} color={T.lo} strokeWidth={2.2} /></button>
+          </>) : (
+            <div style={{ visibility: "hidden" }} aria-hidden>
+              <div style={s.idLabel}>なりたい自分</div>
+              <div style={s.idName}>&nbsp;</div>
+            </div>
+          )}
+        </div>
+
+        <div ref={stageRef} style={{ ...s.stageWrap, position: "relative" }}>
+          <div style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: drag ? 0 : 1 }}>
+            <canvas ref={canvasRef} style={{ width: 320, height: 300, maxWidth: "100%", display: "block", margin: "0 auto" }} />
+          </div>
+          {trans && <img src={trans.url} alt="" onAnimationEnd={() => setTrans(null)} style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 320, height: 300, maxWidth: "100%", pointerEvents: "none", animation: `${trans.dir > 0 ? "orbOutNext" : "orbOutPrev"} .3s cubic-bezier(.22,1,.3,1) forwards` }} />}
+          {hasGoal && cap > 0 && (
+            <div style={s.frameTL}>
+              {full ? <span style={{ ...s.frameN, color: T.gold, opacity: 1 }}>達成</span> : (<>
+                <span style={s.frameN}>{cnt}</span><span style={s.frameU}>粒</span>
+                <span style={s.framePct}>{Math.round(cnt / cap * 100)}%</span>
+              </>)}
+            </div>
+          )}
+          {hasGoal && cap === 0 && <div style={s.frameTL}><span style={{ ...s.frameU, fontSize: 12 }}>習慣を追加</span></div>}
+          {hasGoal && (
+            <div style={s.orbPhotoCtrl}>
+              {photos[g.id] && <button style={s.orbPhotoBtn} onPointerDown={(e) => e.stopPropagation()} onClick={() => clearOrbPhoto(g.id)} aria-label="写真を外す">×</button>}
+              <button style={s.orbPhotoBtn} onPointerDown={(e) => e.stopPropagation()} onClick={() => orbFileRef.current?.click()} aria-label="器の写真"><Camera size={15} color={T.lo} strokeWidth={2} /></button>
+              <input ref={orbFileRef} type="file" accept="image/*" onChange={onOrbFile(g.id)} style={{ display: "none" }} />
+            </div>
+          )}
+          {onAdd && (
+            <div style={s.emptyOver}>
+              <button style={s.addOrbPlus} onClick={openWizard} aria-label="なりたい自分を追加"><Plus size={38} color={T.gold} strokeWidth={2} /></button>
+              <div style={s.addOrbLab}>{addKind === "first" ? "なりたい自分を追加しよう" : "なりたい自分を追加"}</div>
+            </div>
+          )}
+          {drag && (
+            <div ref={trackRef} style={{ position: "absolute", top: 0, left: 0, width: drag.w * 3, height: 300, transform: `translateX(${-drag.w}px)`, willChange: "transform", pointerEvents: "none" }}>
+              {drag.urls.map((u, k) => (
+                <div key={k} style={{ position: "absolute", top: 0, left: k * drag.w, width: drag.w, height: 300, display: "flex", justifyContent: "center" }}>
+                  <img src={u} alt="" style={{ width: 320, maxWidth: "100%", height: 300, display: "block" }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        {allClear && <div style={s.clearLine}>✦ 今日のぶん、ぜんぶできた</div>}
+
+        {/* page nav：4つの器スロット */}
+        <div style={{ ...s.dots, touchAction: "none" }}
+          onPointerDown={() => { dotHoldRef.current = setTimeout(openGoalMgr, 800); }}
+          onPointerUp={() => clearTimeout(dotHoldRef.current)}
+          onPointerCancel={() => clearTimeout(dotHoldRef.current)}
+          onPointerLeave={() => clearTimeout(dotHoldRef.current)}
+        >
+          <button style={s.arrow} onClick={() => goRel(-1)}>‹</button>
+          {slots.map((slot, i) => slot.type === "add"
+            ? <button key={"a" + i} onClick={() => setPage(i)} style={{ ...s.dotPlus, ...(i === slotPos ? { borderColor: T.gold, color: T.gold } : {}) }}>＋</button>
+            : <button key={slot.gi} onClick={() => setPage(i)} style={{ ...s.dot, ...(i === slotPos ? s.dotOn : {}) }} />
+          )}
+          <button style={s.arrow} onClick={() => goRel(1)}>›</button>
+        </div>
+        {onAdd && <div style={s.addHint}>{addKind === "first" ? <>ひと粒ずつ積もって、<br />なりたい自分になっていく。</> : <>器は最大4つ。<br />並べて、同時に育てられる。</>}</div>}
+        {onAdd && <div style={{ flex: 1 }} />}
+
+        {hasGoal && (<div style={{ ...s.todayBand, gap: compact === 2 ? 0 : compact === 1 ? 4 : 10 }}>
+        {/* 実日付（翌日へ＝プロト検証用の日送り。DEV のときだけ表示） */}
+        <div style={{ ...s.dayRow, marginBottom: compact === 2 ? -12 : compact === 1 ? -10 : -6 }}>
+          <span style={s.dayLab}>{(() => { const d = new Date(); d.setDate(d.getDate() + dayOffset); return `${d.getMonth() + 1}/${d.getDate()}（${WD[d.getDay()]}）${dayOffset === 0 ? "・今日" : ""}`; })()}</span>
+          {DEV && dayOffset !== 0 && <button style={s.dayBtn} onClick={() => setDayOffset(0)}>今日に戻す</button>}
+          {DEV && <button style={s.dayBtn} onClick={() => setDayOffset((o) => o + 1)}>翌日へ →</button>}
+        </div>
+
+        {/* habits */}
+        {g.habits.length === 0 ? (
+          <div style={s.noHabits}>
+            <div style={s.noHabitsTxt}>まだ習慣がない。<br />「{g.name}」に近づく小さな行動を足そう。</div>
+            <button style={s.addCell} onClick={openAdd}><Plus size={28} color={T.gold} strokeWidth={2} /></button>
+            <span style={s.cellLabel}>習慣を追加</span>
+          </div>
+        ) : (
+        <div style={{ ...s.habits, gap: compact === 2 ? 2 : compact === 1 ? 3 : 4 }}>
+          <div style={s.habitTools}>
+            <button style={{ ...s.editIcon, ...(editMode ? s.editIconOn : {}) }} onClick={() => setEditMode((m) => !m)} aria-label={editMode ? "完了" : "習慣を編集"}>
+              {editMode ? <Check size={15} color="#0B0C10" strokeWidth={3} /> : <Pencil size={14} color={T.lo} strokeWidth={2.2} />}
+            </button>
+          </div>
+          {showCoach && !editMode && <div style={s.coach}>アイコンを長押しすると、器にひと粒落ちます<span style={s.coachArrow}>▾</span></div>}
+          <div style={{ ...s.grid, gap: compact === 2 ? "6px 38px" : compact === 1 ? "10px 48px" : "16px 56px" }}>
+          {g.habits.map((h, i) => {
+            const col = `rgb(${h.c.join(",")})`;
+            const st = habitStatus(curGi, i); const dis = full || !st.ok;
+            const L = logs[g.id + ":" + h.id]; const streak = streakInfo(h, L, day).cur;
+            const mode = h.fmode || "daily";
+            const dueT = mode === "days" ? (h.days || [0, 1, 2, 3, 4, 5, 6]).includes(((day % 7) + 7) % 7) : true;
+            const tdc = L && L.day === day ? L.td : 0;
+            const dt = dueT && tdc >= (mode === "week" ? 1 : Math.max(1, h.perDay || 1)); // 今日ぶん完了（週モードは1日1回で完了）
+            const inactive = full || (!st.ok && !dt);
+            const gold = dt && allClear; // 全部終わって金色
+            const fillCol = gold ? `rgb(${GOLD_FILL.join(",")})` : `rgb(${h.c.join(",")})`;
+            const type = h.type || "pos";
+            const isTimed = type === "timed";
+            const running = !!(timing && timing.key === (g.id + ":" + h.id));
+            const btnDisabled = isTimed ? (full || (!st.ok && !running)) : dis;
+            const handlers = isTimed ? { onClick: () => startTimer(i) } : { onPointerDown: down(i), onPointerUp: up, onPointerLeave: up, onPointerCancel: up };
+            const perDay = mode === "week" ? 1 : Math.max(1, h.perDay || 1);
+            const frac = dueT ? Math.min(tdc / perDay, 1) : 0; // 1日◯回の進捗
+            const fc = gold ? GOLD_FILL : h.c;
+            const onFillIcon = (0.299 * fc[0] + 0.587 * fc[1] + 0.114 * fc[2]) > 150 ? "#0B0C10" : "#F4F1EA"; // 塗りの上で見える色
+            const timedHint = isTimed && st.ok && !dt && !running && !full; // ▶25
+            return (
+              <div key={h.id} ref={(el) => { if (el) habitCellRefs.current[h.id] = el; else delete habitCellRefs.current[h.id]; }} style={s.cell}>
+                {hDragFrom === i ? (<>
+                  {/* 掴んでいる間の置き場所（点線の円） */}
+                  <div style={{ width: 78, height: 78, borderRadius: "50%", border: `2px dashed ${T.hair2}`, boxSizing: "border-box" }} />
+                  <span style={{ ...s.cellLabel, opacity: 0 }}>{h.name}</span>
+                </>) : (<>
+                <div style={{ position: "relative" }}>
+                  <button onContextMenu={(e) => e.preventDefault()} style={{ ...s.circleBtn, borderRadius: "50%", opacity: editMode ? 1 : (inactive ? 0.34 : 1), animation: gold ? "btnglow 1.8s ease-in-out infinite" : undefined, ...(editMode ? { cursor: hDragFrom !== null ? "grabbing" : "grab" } : {}), touchAction: editMode ? "none" : undefined }} disabled={editMode ? false : btnDisabled} {...(editMode ? {
+                    onPointerDown: (e) => {
+                      e.stopPropagation();
+                      const px = e.clientX, py = e.clientY;
+                      hHoldRef.current = setTimeout(() => {
+                        hDragFromRef.current = i; setHDragFrom(i);
+                        lastSwapRef.current = 0;
+                        setGhost({ Icon: h.Icon, emoji: h.emoji, name: h.name, col, x: px, y: py });
+                        try { navigator.vibrate && navigator.vibrate(8); } catch (err) {}
+                        // ドラッグ中はwindowで座標を拾う（セルのDOMが動いても取りこぼさない）
+                        const move = (ev) => {
+                          const from = hDragFromRef.current; if (from === null) return;
+                          const x = ev.clientX, y = ev.clientY;
+                          if (ghostRef.current) ghostRef.current.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+                          if (Date.now() - lastSwapRef.current < 200) return; // 入れ替え直後はFLIPが終わるまで判定しない（振動防止）
+                          const habits = goalsRef.current[curGi]?.habits || [];
+                          let target = from, best = Infinity;
+                          for (let k = 0; k < habits.length; k++) {
+                            const el = habitCellRefs.current[habits[k].id]; if (!el) continue;
+                            const r = el.getBoundingClientRect();
+                            const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                            const d = Math.hypot(x - cx, y - cy);
+                            if (d < best) { best = d; target = k; }
+                          }
+                          if (target !== from) { swapHabits(from, target); hDragFromRef.current = target; setHDragFrom(target); lastSwapRef.current = Date.now(); }
+                        };
+                        const end = () => {
+                          window.removeEventListener("pointermove", move);
+                          window.removeEventListener("pointerup", end);
+                          window.removeEventListener("pointercancel", end);
+                          hDragFromRef.current = null; setHDragFrom(null); setGhost(null);
+                        };
+                        window.addEventListener("pointermove", move, { passive: true });
+                        window.addEventListener("pointerup", end);
+                        window.addEventListener("pointercancel", end);
+                      }, 320);
+                    },
+                    onPointerUp: () => { if (hDragFromRef.current === null) { clearTimeout(hHoldRef.current); openEdit(i); } },
+                    onPointerLeave: () => { if (hDragFromRef.current === null) clearTimeout(hHoldRef.current); },
+                  } : handlers)}>
+                    <svg width="78" height="78" style={{ position: "absolute", inset: 0 }}>
+                      <circle cx="39" cy="39" r={RR} fill="none" stroke={dt ? fillCol : `rgba(${h.c.join(",")},0.28)`} strokeWidth="3" strokeDasharray={type === "neg" && !dt ? "4 4" : undefined} />
+                      {frac > 0 && frac < 1 && <path d={sectorPath(39, 39, RR - 1.5, frac)} fill={fillCol} />}
+                      {frac >= 1 && <circle cx="39" cy="39" r={RR - 1.5} fill={fillCol} />}
+                      {perDay > 1 && Array.from({ length: perDay }).map((_, k) => {
+                        const a = -Math.PI / 2 + k * (2 * Math.PI / perDay);
+                        return <line key={k} x1="39" y1="39" x2={39 + (RR - 1.5) * Math.cos(a)} y2={39 + (RR - 1.5) * Math.sin(a)} stroke="rgba(11,12,16,0.28)" strokeWidth="1.4" />;
+                      })}
+                      {held === i && !isTimed && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${HOLD}ms linear forwards` }} />}
+                      {running && <circle cx="39" cy="39" r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
+                        strokeDasharray={CIRC} strokeDashoffset={CIRC} transform="rotate(-90 39 39)" style={{ animation: `fillring ${timing.dur}ms linear forwards` }} />}
+                    </svg>
+                    {h.emoji
+                      ? <span style={{ position: "relative", fontSize: 26, lineHeight: 1, opacity: running ? 0.5 : 1 }}>{h.emoji}</span>
+                      : <h.Icon size={25} color={frac > 0 ? onFillIcon : col} strokeWidth={2.2} style={{ position: "relative", opacity: running ? 0.5 : 1, filter: frac > 0 && onFillIcon !== "#0B0C10" ? "drop-shadow(0 0.5px 1px rgba(0,0,0,0.35))" : "none" }} />}
+                  </button>
+                  {!editMode && streak > 0 && <span style={s.streakBadge}><Flame size={10} color="#0B0C10" strokeWidth={2.6} fill="#0B0C10" />{streak}</span>}
+                  {!editMode && timedHint && <span style={s.timedBadge}>▶{h.min || 5}</span>}
+                  {!editMode && h.url && h.url.trim() && (
+                    <a href={/^https?:\/\//i.test(h.url.trim()) ? h.url.trim() : `https://${h.url.trim()}`}
+                      target="_blank" rel="noopener noreferrer" aria-label={`${h.name} のリンクを開く`}
+                      onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={s.linkBadge}>
+                      <ExternalLink size={11} color={T.lo} strokeWidth={2.4} />
+                    </a>
+                  )}
+                  {editMode && <button style={s.editBadge} onClick={(e) => { e.stopPropagation(); openEdit(i); }} aria-label={`${h.name} を編集`}><Pencil size={11} color="#0B0C10" strokeWidth={2.6} /></button>}
+                </div>
+                <span style={s.cellLabel}>{h.name}</span>
+                {perDay > 1 && dueT && !full && <span style={{ ...s.cellStatus, color: tdc >= perDay ? T.gold : T.lo }}>{tdc}/{perDay}</span>}
+                </>)}
+              </div>
+            );
+          })}
+          {editMode && g.habits.length < MAX_HABITS && (
+          <div style={{ ...s.cell, animation: "cellIn .58s cubic-bezier(.2,.8,.3,1) both" }}>
+            <button style={s.addCell} onClick={openAdd}><Plus size={26} color={T.gold} strokeWidth={2} /></button>
+            <span style={s.cellLabel}>追加</span>
+          </div>
+          )}
+          </div>
+        </div>
+        )}
+        <div style={s.hint}>{full ? "この器は満タン。見立てた回数に到達＝達成。" : "長押しで溜まる。器は見立てた日数ぶんで満タンになる"}</div>
+        </div>)}
+      </div>
+
+      {/* 器管理オーバーレイ（dotsバー長押しで開く） */}
+      {goalMgr && (
+        <div style={{ ...s.overlay, zIndex: 65 }} onClick={() => setGoalMgr(false)}>
+          <div style={{ ...s.modal, gap: 12 }} onClick={(e) => e.stopPropagation()}>
+            <div style={s.mTitle}>器を並べ替え</div>
+            <div style={s.mSub}>上下のボタンで順番を入れ替え。削除すると粒の記録も消えます。</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {slots.map((slot, i) => {
+                const isGoal = slot.type === "goal";
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 12, padding: "8px 10px" }}>
+                    {gmSnaps[i]
+                      ? <img src={gmSnaps[i]} alt="" draggable={false} style={{ width: 44, height: 42, objectFit: "cover", flexShrink: 0 }} />
+                      : <div style={{ width: 44, height: 42, flexShrink: 0 }} />
+                    }
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: isGoal ? T.hi : T.lo2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {isGoal ? goals[slot.gi].name : "空き"}
+                    </div>
+                    {isGoal && (<>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <button disabled={i === 0} onClick={() => swapGoalSlots(i, i - 1)}
+                          style={{ background: "transparent", border: `1px solid ${T.hair2}`, borderRadius: 8, width: 30, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: i === 0 ? "default" : "pointer", opacity: i === 0 ? 0.3 : 1, padding: 0 }} aria-label="上へ">
+                          <ChevronUp size={15} color={T.hi} strokeWidth={2.4} />
+                        </button>
+                        <button disabled={i >= activeIdx.length - 1} onClick={() => swapGoalSlots(i, i + 1)}
+                          style={{ background: "transparent", border: `1px solid ${T.hair2}`, borderRadius: 8, width: 30, height: 22, display: "flex", alignItems: "center", justifyContent: "center", cursor: i >= activeIdx.length - 1 ? "default" : "pointer", opacity: i >= activeIdx.length - 1 ? 0.3 : 1, padding: 0 }} aria-label="下へ">
+                          <ChevronDown size={15} color={T.hi} strokeWidth={2.4} />
+                        </button>
+                      </div>
+                      <button onClick={() => setGmConfirm({ gi: slot.gi, name: goals[slot.gi].name })}
+                        style={{ background: "transparent", border: `1px solid rgba(220,60,60,0.35)`, borderRadius: 999, padding: "4px 10px", fontSize: 11, color: "rgba(220,80,80,0.85)", cursor: "pointer", flexShrink: 0 }}>削除</button>
+                    </>)}
+                  </div>
+                );
+              })}
+            </div>
+            <button style={{ ...s.back, alignSelf: "stretch", marginTop: 4 }} onClick={() => setGoalMgr(false)}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {/* 器の削除確認 */}
+      {gmConfirm && (
+        <div style={{ ...s.overlay, zIndex: 80 }} onClick={() => setGmConfirm(null)}>
+          <div style={{ ...s.modal, gap: 14, textAlign: "center", maxWidth: 320 }} onClick={(e) => e.stopPropagation()}>
+            <div style={s.mTitle}>本当に削除しますか？</div>
+            <div style={s.mSub}>「{gmConfirm.name}」と、積んだ粒の記録がすべて消えます。これは元に戻せません。</div>
+            <div style={s.navRow}>
+              <button style={{ ...s.back, flex: 1 }} onClick={() => setGmConfirm(null)}>やめる</button>
+              <button style={{ ...s.create, flex: 1, background: "rgba(220,60,60,0.9)", color: "#fff" }}
+                onClick={() => { deleteGoalAt(gmConfirm.gi); setGmConfirm(null); }}>削除する</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 初回イントロ（4枚：概念→練習→哲学→ゴール） */}
+      {showIntro && (
+        <div style={{ ...s.overlay, zIndex: 70 }}>
+          <div style={{ ...s.modal, alignItems: "center", textAlign: "center", maxWidth: 360, gap: 12, maxHeight: "92vh", overflowY: "auto" }}>
+            <div style={s.steps}>{[0, 1, 2, 3].map((n) => <span key={n} style={{ ...s.stepDot, ...(n <= introStep ? s.stepOn : {}) }} />)}</div>
+            {introStep === 0 && (<>
+              <div style={{ margin: "2px 0" }}><MiniOrb colors={[]} size={132} done={false} /></div>
+              <div style={s.introLabel}>TSUMIKI</div>
+              <div style={s.introTitle}>なりたい自分を、器に。</div>
+              <div style={s.introBody}>「なりたい自分」をひとつ決めます。たとえば「いい体になる」。それが、からっぽの器になります。</div>
+            </>)}
+            {introStep === 1 && (<>
+              <div style={{ margin: "2px 0" }}><MiniOrb colors={[[128, 142, 174]]} size={132} done={false} /></div>
+              <div style={s.introTitle}>やったら、長押し。</div>
+              <div style={s.introBody}>なりたい自分がやっていそうな習慣を登録します。習慣ができたらボタンを長押しすると、器に粒がひとつ落ちます。</div>
+            </>)}
+            {introStep === 2 && (<>
+              <div style={{ margin: "2px 0" }}><MiniOrb colors={INTRO_GRAINS} size={132} done /></div>
+              <div style={s.introTitle}>粒は、あなたの行動。</div>
+              <div style={s.introBody}>一粒一粒が、あなたの行動そのものです。積もった粒が、なりたい自分の一部になっている。</div>
+            </>)}
+            {introStep === 3 && (<>
+              <div style={{ margin: "2px 0" }}><MiniOrb colors={INTRO_GRAINS} size={132} done /></div>
+              <div style={s.introTitle}>満ちたら、なれた自分。</div>
+              <div style={s.introBody}>器が粒でいっぱいになったら達成。「なれた自分」として、コレクションに並びます。</div>
+            </>)}
+            <button style={{ ...s.create, alignSelf: "stretch" }} onClick={() => introStep < 3 ? setIntroStep(introStep + 1) : dismissIntro()}>{introStep < 3 ? "次へ" : "はじめる"}</button>
+            <button style={s.introSkip} onClick={() => introStep > 0 ? setIntroStep(introStep - 1) : dismissIntro()}>{introStep > 0 ? "もどる" : "スキップ"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* create wizard */}
+      {wiz && (
+        <div style={s.overlay} onClick={() => setWiz(null)}>
+          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+            {wiz.step <= 1 && <div style={s.steps}>{[0, 1].map((n) => <span key={n} style={{ ...s.stepDot, ...(n <= wiz.step ? s.stepOn : {}) }} />)}</div>}
+
+            {wiz.step === 0 && (
+              <>
+                <div style={s.mTitle}>どうなりたい？</div>
+                <div style={s.mSub}>3週間後でも1年後でもいい。なりたい自分を一言で。</div>
+                <input style={s.input} autoFocus value={wiz.name} placeholder="例：いい体を作る"
+                  onChange={(e) => setWiz((w) => ({ ...w, name: e.target.value }))} />
+                <button style={{ ...s.create, opacity: wiz.name.trim() ? 1 : 0.4 }} disabled={!wiz.name.trim()}
+                  onClick={() => setWiz((w) => ({ ...w, step: 1 }))}>次へ</button>
+              </>
+            )}
+
+            {wiz.step === 1 && (
+              <>
+                <div style={s.mTitle}>何日で、なれてたい？</div>
+                <div style={s.mSub}>「{wiz.name}」になるまでの器の大きさになります。あとから変えられます。</div>
+                <div style={s.periodRow}>
+                  {[{ lab: "3週間", d: 21 }, { lab: "1ヶ月", d: 30 }, { lab: "3ヶ月", d: 90 }, { lab: "半年", d: 180 }].map((p) => (
+                    <button key={p.lab} style={{ ...s.periodChip, ...(wiz.days === p.d ? s.periodOn : {}) }}
+                      onClick={() => setWiz((w) => ({ ...w, days: p.d }))}>{p.lab}</button>
+                  ))}
+                </div>
+                <div style={s.capBox}>
+                  <div style={s.capLab}>器の大きさ</div>
+                  <div style={s.capBig}>{wiz.days}<span style={{ fontSize: 13, color: T.lo, fontWeight: 400 }}> 日ぶん</span></div>
+                  <input type="range" min="7" max="365" step="1" value={wiz.days} style={{ width: "100%", accentColor: T.gold, marginTop: 10 }}
+                    onChange={(e) => setWiz((w) => ({ ...w, days: +e.target.value }))} />
+                  <div style={s.capCalc}>このぶんを積み上げたら「なれた」。習慣はこの後、ゴールの画面で足していく。</div>
+                </div>
+                <div style={s.navRow}>
+                  <button style={s.back} onClick={() => setWiz((w) => ({ ...w, step: 0 }))}>戻る</button>
+                  <button style={{ ...s.create, flex: 1 }} onClick={() => createGoal(wiz.days)}>この自分を作る</button>
+                </div>
+              </>
+            )}
+
+            {wiz.step === 2 && (
+              <>
+                <div style={s.mTitle}>なりたい自分が、している習慣は？</div>
+                <div style={s.mSub}>「{wiz.name}」に近づく行動を、ひとつ。やるたび器に積もります。あとから増やせます。</div>
+                <button style={s.create} onClick={() => { const i = wiz.newIdx; setWiz(null); setEditor({ gi: i, hIndex: -1, draft: blankDraft(0) }); }}>習慣を決める</button>
+                <button style={s.back} onClick={() => setWiz(null)}>あとで</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* habit manager */}
+      {editList && (
+        <div style={s.overlay} onClick={() => setEditList(false)}>
+          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={s.mTitle}>ゴールを編集</div>
+            <div style={s.field}><label style={s.lab}>なりたい自分</label>
+              <input style={s.input} value={g.name} onChange={(e) => setGoals((gs) => gs.map((x, k) => k === curGi ? { ...x, name: e.target.value } : x))} /></div>
+            <div style={s.field}><label style={s.lab}>何日で（締切）</label>
+              <input style={s.input} type="number" value={g.days || 30} onChange={(e) => setGoals((gs) => gs.map((x, k) => k === curGi ? { ...x, days: Math.max(1, +e.target.value || 1) } : x))} />
+              <div style={s.mSub}>目標 = 日数 × 習慣のペース ＝ <b style={{ color: T.gold }}>{cap}粒</b>。習慣を足すと目標も増える（同じ日数ぶんの量なので楽にはならない）。積んだ粒は減りません。</div></div>
+            <button style={s.create} onClick={() => setEditList(false)}>完了</button>
+          </div>
+        </div>
+      )}
+
+      {/* habit editor */}
+      {editor && (() => {
+        const d = editor.draft;
+        const goalName = goals[editor.gi]?.name;
+        const isTimed = d.type === "timed";
+        const daysBad = d.fmode === "days" && d.days.length === 0; // 曜日モードで0日＝詰める手段がない
+        const PrevIcon = ICONS[d.iconIdx] || Star;
+        const col = `rgb(${SWATCHES[d.colorIdx].join(",")})`;
+        // アイコン・絵文字の選択ページ（決めたらエディタに戻る）
+        if (editor.pickerOpen) {
+          const tab = editor.pickerTab || "emoji";
+          return (
+            <div style={s.overlay} onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditor((e) => ({ ...e, pickerOpen: false }))}>
+              <div style={{ ...s.modal, maxHeight: "90vh", display: "flex", flexDirection: "column", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button style={{ ...s.back, padding: "6px 12px", flex: "0 0 auto" }} onClick={() => setEditor((e) => ({ ...e, pickerOpen: false }))}>← 戻る</button>
+                  <div style={{ ...s.mTitle, margin: 0 }}>{tab === "emoji" ? "絵文字を選ぶ" : "アイコンを選ぶ"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={{ ...s.periodChip, flex: 1, ...(tab === "emoji" ? s.periodOn : {}) }} onClick={() => setEditor((e) => ({ ...e, pickerTab: "emoji" }))}>絵文字</button>
+                  <button style={{ ...s.periodChip, flex: 1, ...(tab === "icon" ? s.periodOn : {}) }} onClick={() => setEditor((e) => ({ ...e, pickerTab: "icon" }))}>アイコン</button>
+                </div>
+                {tab === "emoji" ? (<>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input style={{ ...s.input, width: 60, textAlign: "center", fontSize: 22, padding: "6px 4px" }} value={d.emoji} placeholder="😀" maxLength={4}
+                      onChange={(e) => setD({ emoji: [...e.target.value].slice(-1).join(""), iconAuto: false })} />
+                    <span style={{ fontSize: 11.5, color: T.lo }}>好きな絵文字を直接入力してもOK</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 7, flex: 1, overflowY: "auto", paddingRight: 2, alignContent: "start" }}>
+                    {EMOJIS.map((em, k) => (
+                      <button key={k} style={{ ...s.emojiCell, ...(d.emoji === em ? s.iconOn : {}) }}
+                        onClick={() => setEditor((e) => ({ ...e, draft: { ...e.draft, emoji: em, iconAuto: false }, pickerOpen: false }))}>
+                        <span style={{ fontSize: 23, lineHeight: 1 }}>{em}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 7, flex: 1, overflowY: "auto", paddingRight: 2, alignContent: "start" }}>
+                    {ICONS.map((Ic, k) => Ic ? (
+                      <button key={k} style={{ ...s.iconCell, ...(!d.emoji && d.iconIdx === k ? s.iconOn : {}) }}
+                        onClick={() => setEditor((e) => ({ ...e, draft: { ...e.draft, iconIdx: k, emoji: "", iconAuto: false }, pickerOpen: false }))}>
+                        <Ic size={23} color={!d.emoji && d.iconIdx === k ? T.gold : T.hi} strokeWidth={2} />
+                      </button>
+                    ) : null)}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }
+        return (
+        <div style={s.overlay} onPointerDown={(e) => e.stopPropagation()} onClick={() => setEditor(null)}>
+          <div style={{ ...s.modal, maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={s.mTitle}>{editor.hIndex < 0 ? "習慣を追加" : "習慣を編集"}</div>
+            {editor.hIndex < 0 && goalName && <div style={s.mSub}>「{goalName}」に近づく行動を、ひとつ。</div>}
+
+            {/* 種別：アイコンで選ぶ */}
+            <div style={s.typeRow}>
+              {TYPES.map((t) => {
+                const on = d.type === t.id;
+                return (
+                  <button key={t.id} style={{ ...s.typeBtn, ...(on ? s.typeBtnOn : {}) }} onClick={() => setD({ type: t.id })} aria-label={t.lab} title={t.lab}>
+                    <t.Icon size={22} color={on ? T.gold : T.lo} strokeWidth={2} />
+                  </button>
+                );
+              })}
+            </div>
+            <div style={s.typeDesc}>{TYPES.find((t) => t.id === d.type)?.desc}</div>
+
+            {/* 名前（打つとアイコンが追従）＋ 選択中アイコン */}
+            <div style={s.nameRow}>
+              <button style={{ ...s.iconPreview, borderColor: col }} onClick={() => setEditor((e) => ({ ...e, pickerOpen: true, pickerTab: e.draft.emoji ? "emoji" : "icon" }))}>
+                {d.emoji ? <span style={{ fontSize: 24, lineHeight: 1 }}>{d.emoji}</span> : <PrevIcon size={24} color={col} strokeWidth={2.2} />}
+              </button>
+              <input style={{ ...s.input, flex: 1, fontSize: 16 }} autoFocus value={d.name} placeholder="例：朝ストレッチ"
+                onChange={(e) => { const name = e.target.value; setD(d.iconAuto && !d.emoji ? { name, iconIdx: guessIcon(name) } : { name }); }} />
+            </div>
+            <button style={s.iconToggle} onClick={() => setEditor((e) => ({ ...e, pickerOpen: true, pickerTab: e.draft.emoji ? "emoji" : "icon" }))}>アイコン・絵文字を変える</button>
+
+            {/* 頻度 */}
+            <div style={s.field}><label style={s.lab}>頻度</label>
+              <div style={s.periodRow}>
+                {[["daily", "毎日"], ["days", "曜日"], ["week", "週◯回"]].map(([m, l]) => (
+                  <button key={m} style={{ ...s.periodChip, ...(d.fmode === m ? s.periodOn : {}) }} onClick={() => setD({ fmode: m })}>{l}</button>
+                ))}
+              </div>
+              {d.fmode === "days" && (
+                <div style={{ display: "flex", gap: 5, marginTop: 8, justifyContent: "space-between" }}>
+                  {WD.map((wd, k) => {
+                    const on = d.days.includes(k);
+                    return <button key={k} onClick={() => setD({ days: on ? d.days.filter((x) => x !== k) : [...d.days, k] })}
+                      style={{ ...s.wd, ...(on ? s.wdOn : {}) }}>{wd}</button>;
+                  })}
+                </div>
+              )}
+              {daysBad && <div style={{ ...s.mSub, color: "#E08", marginTop: 6 }}>曜日を1つ以上選んでください</div>}
+              {d.fmode === "week" && (
+                <div style={{ marginTop: 8 }}><label style={s.lab}>週に何回</label>
+                  <div style={s.sliderRow} onPointerDown={(e) => e.stopPropagation()}>
+                    <input type="range" min="1" max="7" step="1" value={d.perWeek} style={s.slider} onChange={(e) => setD({ perWeek: +e.target.value })} />
+                    <span style={s.sliderVal}>{d.perWeek}回</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 詳細：畳んでおく */}
+            <button style={s.detailToggle} onClick={() => setEditor((e) => ({ ...e, detailOpen: !e.detailOpen }))}>
+              <span>詳細設定</span>
+              <ChevronDown size={16} color={T.lo} style={{ transform: editor.detailOpen ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+            </button>
+            {editor.detailOpen && (<>
+              {isTimed ? (
+                <>
+                  <div style={s.field}><label style={s.lab}>分</label>
+                    <div style={s.sliderRow} onPointerDown={(e) => e.stopPropagation()}>
+                      <input type="range" min="1" max="120" step="1" value={d.min} style={s.slider} onChange={(e) => setD({ min: +e.target.value })} />
+                      <span style={s.sliderVal}>{d.min}分</span>
+                    </div>
+                  </div>
+                  <div style={s.field}><label style={s.lab}>1日に何回</label>
+                    <div style={s.sliderRow} onPointerDown={(e) => e.stopPropagation()}>
+                      <input type="range" min="1" max="10" step="1" value={d.perDay} style={s.slider} onChange={(e) => setD({ perDay: +e.target.value })} />
+                      <span style={s.sliderVal}>{d.perDay}回</span>
+                    </div>
+                  </div>
+                </>
+              ) : d.fmode !== "week" && (
+                <div style={s.field}><label style={s.lab}>1日に何回</label>
+                  <div style={s.sliderRow} onPointerDown={(e) => e.stopPropagation()}>
+                    <input type="range" min="1" max="10" step="1" value={d.perDay} style={s.slider} onChange={(e) => setD({ perDay: +e.target.value })} />
+                    <span style={s.sliderVal}>{d.perDay}回</span>
+                  </div>
+                </div>
+              )}
+
+              <div style={s.field}><label style={s.lab}>色</label>
+                <div style={s.swRow}>
+                  {SWATCHES.map((c, k) => (
+                    <button key={k} onClick={() => setD({ colorIdx: k })}
+                      style={{ ...s.sw, background: `rgb(${c.join(",")})`, outline: d.colorIdx === k ? `2px solid ${T.hi}` : "none" }} />
+                  ))}
+                </div>
+              </div>
+
+              <div style={s.field}>
+                <div style={{ background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", opacity: 0.38, pointerEvents: "none" }}>
+                    <label style={s.lab}>リマインダー</label>
+                    <button style={{ ...s.toggle, background: T.hair2 }}>
+                      <span style={{ ...s.knob }} />
+                    </button>
+                  </div>
+                  <div style={{ ...s.mSub, marginTop: 6 }}>アプリ版で対応予定</div>
+                </div>
+              </div>
+
+              <div style={s.field}><label style={s.lab}>アクションURL（任意）</label>
+                <input style={s.input} value={d.url} placeholder="https://..." onChange={(e) => setD({ url: e.target.value })} /></div>
+            </>)}
+
+            <div style={s.navRow}>
+              {editor.hIndex >= 0 && <button style={{ ...s.back, color: "#E08", borderColor: "rgba(255,80,120,0.4)" }} onClick={deleteHabit}>削除</button>}
+              <button style={{ ...s.create, flex: 1, opacity: (d.name.trim() && !daysBad) ? 1 : 0.4 }} disabled={!d.name.trim() || daysBad} onClick={saveHabit}>保存</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* achievement ceremony */}
+      {achieved !== null && (
+        <div style={s.achOverlay}>
+          <div style={s.achGlow} />
+          <div style={s.achInner}>
+            <MiniOrb colors={(ballsBy.current[goals[achieved]?.id] || []).map((b) => b.c)} size={124} done />
+            <div style={s.achLabel}>なれた自分</div>
+            <div style={s.achGoal2}>{goals[achieved].name}</div>
+            <div style={s.achRule} />
+            <div style={s.achSub}>{capOf(goals[achieved])}粒、積み上げた</div>
+            <div style={s.achNote}>コレクションに加わりました</div>
+            <button style={{ ...s.create, marginTop: 10, alignSelf: "stretch" }} onClick={() => { graduate(achieved); setAchieved(null); openWizard(); }}>新しい自分を始める</button>
+            <button style={s.achClose} onClick={() => { graduate(achieved); setAchieved(null); }}>とじる</button>
+          </div>
+        </div>
+      )}
+
+      {/* settings */}
+      {showSettings && (
+        <div style={s.overlay} onClick={() => setShowSettings(false)}>
+          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={{ ...s.mTitle, marginBottom: 14 }}>設定</div>
+            <div style={s.setSection}>テーマ</div>
+            <div style={s.swatchRow}>
+              {THEME_ORDER.map(([k, name]) => (
+                <div key={k} style={s.swatchItem} onClick={() => setTheme(k)}>
+                  <div style={{ ...s.swatch, background: THEMES[k].bg, borderColor: theme === k ? T.gold : THEMES[k].hair2, boxShadow: theme === k ? `0 0 0 2px ${T.gold}` : "none" }}>
+                    <span style={{ width: 9, height: 9, borderRadius: 999, background: THEMES[k].gold }} />
+                  </div>
+                  <span style={s.swatchLab}>{name}</span>
+                </div>
+              ))}
+            </div>
+            <div style={s.setSection}>バックアップ</div>
+            <div style={s.setHint}>記録は端末の中だけに保存されます。機種変更やデータ消去で消えないよう、ときどき書き出して保管してください。</div>
+            <button style={{ ...s.create, alignSelf: "stretch", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={exportData}><Download size={15} />データを書き出す</button>
+            <button style={{ ...s.back, alignSelf: "stretch", marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }} onClick={() => importRef.current?.click()}><Upload size={15} />バックアップから読み込む</button>
+            <input ref={importRef} type="file" accept="application/json,.json" onChange={onImportFile} style={{ display: "none" }} />
+            {ioMsg && <div style={{ ...s.setHint, color: T.gold, marginTop: 10, textAlign: "center" }}>{ioMsg}</div>}
+            <button style={{ ...s.back, alignSelf: "stretch", marginTop: 16 }} onClick={() => setShowSettings(false)}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {/* collection */}
+      {showCol && (
+        <div style={s.overlay} onClick={() => setShowCol(false)}>
+          <div style={{ ...s.modal, maxHeight: "86vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+            <div style={s.mTitle}>コレクション</div>
+            <div style={s.mSub}>満タンにして「なれた」自分たち</div>
+            {collection.length === 0 ? (
+              <div style={s.empty}>まだ無い。器を満タンにすると、ここに並びます。</div>
+            ) : (
+              <div style={s.colGrid}>
+                {collection.map((it, i) => (
+                  <div key={i} style={{ ...s.colItem, cursor: "pointer" }} onClick={() => { setShowCol(false); setColDetail(it); }}>
+                    <MiniOrb colors={it.colors} />
+                    <div style={s.colName}>{it.name}</div>
+                    <div style={s.colMeta}>{it.capacity}粒・{it.date}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button style={s.back} onClick={() => setShowCol(false)}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {/* collection item detail */}
+      {colDetail && (
+        <div style={s.overlay} onClick={() => setColDetail(null)}>
+          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center" }}><MiniOrb colors={colDetail.colors} size={140} /></div>
+            <div style={{ textAlign: "center" }}>
+              <div style={s.idLabel}>なれた自分</div>
+              <div style={{ ...s.mTitle, fontSize: 20, marginTop: 4 }}>{colDetail.name}</div>
+              <div style={s.colMeta}>{colDetail.capacity}粒・{colDetail.date}</div>
+            </div>
+            <div style={s.field}>
+              <label style={s.lab}>何でできていたか</label>
+              {comp(colDetail).map((x, i) => (
+                <div key={i} style={s.compRow}>
+                  <span style={{ ...s.compDot, background: `rgb(${x.c.join(",")})` }} />
+                  <span style={{ flex: 1 }}>{x.name}</span>
+                  <span style={s.compN}>{x.n}粒</span>
+                </div>
+              ))}
+            </div>
+            <button style={s.back} onClick={() => setColDetail(null)}>閉じる</button>
+          </div>
+        </div>
+      )}
+
+      {/* goal detail page */}
+      {goalDetail !== null && (() => {
+        const gi = goalDetail, gg = goals[gi];
+        const colors = (ballsBy.current[gg.id] || []).map((b) => b.c);
+        const cntD = colors.length, capD = capOf(gg), pct = capD ? Math.min(100, Math.round(cntD / capD * 100)) : 0, remain = Math.max(0, capD - cntD);
+        const doneD = capD > 0 && cntD >= capD;
+        // この調子で何日：理想ペースではなく、直近14日の“実際に積んだ”ペースで見積もる
+        const ESTWIN = 14, winFrom = day - ESTWIN + 1;
+        let recentGrains = 0;
+        gg.habits.forEach((h) => { const L = logs[gg.id + ":" + h.id]; if (L?.hist) Object.entries(L.hist).forEach(([dd, c]) => { if (+dd >= winFrom && +dd <= day) recentGrains += c; }); });
+        const earliestStart = gg.habits.reduce((m, h) => Math.min(m, h.startDay || 0), day);
+        const obsDays = Math.max(1, Math.min(ESTWIN, day - earliestStart + 1)); // 観測できた日数（ゴールが若ければそのぶん短く）
+        const recentPace = recentGrains / obsDays;
+        const estDays = recentPace > 0 ? Math.ceil(remain / recentPace) : null; // 直近ゼロなら見積もり不能＝「—」
+        const freqLabel = (h) => { const m = h.fmode || "daily"; const pd = Math.max(1, h.perDay || 1); let b = m === "week" ? `週${h.perWeek || 3}回` : m === "days" ? ((h.days || []).map((d) => WD[d]).join("") || "曜日") : "毎日"; if (pd > 1) b += `・1日${pd}回`; return b; };
+        const typeLabel = (h) => h.type === "neg" ? "やめる" : h.type === "timed" ? `${h.min || 5}分` : null;
+        const start = Math.max(0, day - 13); const ratePts = [];
+        for (let d = start; d <= day; d++) {
+          let act = 0, exp = 0;
+          gg.habits.forEach((h, i) => { const sd = h.startDay || 0; if (d < sd) return; const L = logs[gg.id + ":" + h.id]; if (L?.hist) Object.entries(L.hist).forEach(([dd, c]) => { if (+dd <= d) act += c; }); exp += pace([h]) * (d - sd + 1); });
+          ratePts.push({ d, r: exp > 0 ? Math.min(100, act / exp * 100) : 0 });
+        }
+        const overallRate = ratePts.length ? Math.round(ratePts[ratePts.length - 1].r) : 0;
+        const CW = 300, CH = 84, PX = 6, PY = 8, np = ratePts.length;
+        const xOf = (i) => PX + (np <= 1 ? (CW - 2 * PX) / 2 : i / (np - 1) * (CW - 2 * PX));
+        const yOf = (r) => CH - PY - (r / 100) * (CH - 2 * PY);
+        const linePts = ratePts.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.r).toFixed(1)}`).join(" ");
+        const areaPts = `${xOf(0).toFixed(1)},${CH - PY} ${linePts} ${xOf(np - 1).toFixed(1)},${CH - PY}`;
+        return (
+          <div style={s.overlay} onClick={() => setGoalDetail(null)}>
+            <div style={{ ...s.modal, maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "center" }}><MiniOrb colors={colors} size={150} done={doneD} /></div>
+              <div style={{ textAlign: "center" }}>
+                <div style={s.idLabel}>{doneD ? "なれた自分" : "なりたい自分"}</div>
+                <div style={{ ...s.mTitle, fontSize: 21, marginTop: 4, color: doneD ? T.gold : T.hi }}>{gg.name}</div>
+              </div>
+              <div style={s.gdProg}>
+                <div style={s.gdBarBg}><div style={{ ...s.gdBarFill, width: pct + "%", background: doneD ? T.gold : "rgba(190,214,242,0.85)" }} /></div>
+                <div style={s.gdProgRow}><span>{cntD} / {capD} 粒</span><span>{pct}%</span></div>
+              </div>
+              <div style={s.gdStats}>
+                <div style={s.gdStat}><div style={s.gdStatN}>{remain}</div><div style={s.gdStatL}>のこり粒</div></div>
+                <div style={s.gdStat}><div style={s.gdStatN}>{doneD ? "—" : (estDays != null ? `約${estDays}` : "—")}</div><div style={s.gdStatL}>この調子で日</div></div>
+                <div style={s.gdStat}><div style={{ ...s.gdStatN, color: T.gold }}>{overallRate}%</div><div style={s.gdStatL}>達成率</div></div>
+              </div>
+              <div style={s.field}>
+                <label style={s.lab}>達成率の推移</label>
+                <div style={s.chartWrap}>
+                  <svg viewBox={`0 0 ${CW} ${CH}`} style={{ width: "100%", display: "block" }}>
+                    <line x1={PX} y1={yOf(100)} x2={CW - PX} y2={yOf(100)} stroke={T.hair2} strokeWidth="1" />
+                    <line x1={PX} y1={yOf(50)} x2={CW - PX} y2={yOf(50)} stroke={T.hair} strokeWidth="1" strokeDasharray="3 4" />
+                    <polygon points={areaPts} fill="rgba(201,162,74,0.12)" />
+                    <polyline points={linePts} fill="none" stroke="rgb(201,162,74)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                    <circle cx={xOf(np - 1)} cy={yOf(ratePts.length ? ratePts[np - 1].r : 0)} r="3.2" fill="rgb(201,162,74)" />
+                  </svg>
+                  <div style={s.chartFoot}><span>{(() => { const dt = new Date(); dt.setDate(dt.getDate() + (start - now)); return `${dt.getMonth() + 1}/${dt.getDate()}`; })()}</span><span>{dayOffset === 0 ? "今日" : (() => { const dt = new Date(); dt.setDate(dt.getDate() + dayOffset); return `${dt.getMonth() + 1}/${dt.getDate()}`; })()}</span></div>
+                </div>
+              </div>
+              <div style={s.field}>
+                <label style={s.lab}>習慣ごと</label>
+                {gg.habits.map((h, i) => {
+                  const L = logs[gg.id + ":" + h.id] || {};
+                  const cnt = (ballsBy.current[gg.id] || []).filter((b) => b.hid === h.id).length;
+                  const si = streakInfo(h, L, day); const cur = si.cur, best = si.best, su = si.unit;
+                  const hpace = pace([h]);
+                  const elapsedH = Math.max(1, day - (h.startDay || 0) + 1);
+                  const hdone = L.hist ? Object.values(L.hist).reduce((a, b) => a + b, 0) : 0;
+                  const rate = hpace > 0 ? Math.min(100, Math.round(hdone / (hpace * elapsedH) * 100)) : 0;
+                  const tl = typeLabel(h);
+                  return (
+                    <div key={i} style={s.gdHabit2}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ ...s.compDot, background: `rgb(${h.c.join(",")})` }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={s.gdHName}>{h.name}</div>
+                          <div style={s.gdHSub}>{freqLabel(h)}{tl ? "・" + tl : ""}</div>
+                        </div>
+                        <span style={s.compN}>{cnt}粒</span>
+                      </div>
+                      <div style={s.statRow}>
+                        <div style={s.statCell}><span style={s.statNum}>{rate}%</span><span style={s.statLab}>達成率</span></div>
+                        <div style={s.statCell}><span style={s.statNum}>{cur}<span style={s.statU}>{su}</span></span><span style={s.statLab}>現在</span></div>
+                        <div style={s.statCell}><span style={{ ...s.statNum, color: T.gold }}>{best}<span style={s.statU}>{su}</span></span><span style={s.statLab}>最高</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={s.navRow}>
+                <button style={{ ...s.back, flex: 1 }} onClick={() => { setGoalDetail(null); setPage(Math.max(0, activeIdx.indexOf(gi))); setEditList(true); }}>ゴールを編集</button>
+                <button style={{ ...s.create, flex: 1 }} onClick={() => setGoalDetail(null)}>閉じる</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 習慣ドラッグ中、指に追従する複製（ゴースト） */}
+      {ghost && (
+        <div ref={ghostRef} style={{ position: "fixed", left: 0, top: 0, zIndex: 90, pointerEvents: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, willChange: "transform", transform: `translate(${ghost.x}px, ${ghost.y}px) translate(-50%, -50%)` }}>
+          <div style={{ width: 78, height: 78, borderRadius: "50%", background: T.surface2, border: `2px solid ${ghost.col}`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 14px 30px rgba(0,0,0,0.45)", transform: "scale(1.08)" }}>
+            {ghost.emoji ? <span style={{ fontSize: 27, lineHeight: 1 }}>{ghost.emoji}</span> : <ghost.Icon size={26} color={ghost.col} strokeWidth={2.2} />}
+          </div>
+          <span style={{ ...s.cellLabel, opacity: 0.9 }}>{ghost.name}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniOrb({ colors, size = 96, done = true }) {
+  const mgId = useRef("mg_" + uid()).current;
+  const cx = size / 2, cy = size / 2, R = size / 2 - 5;
+  const n = Math.min(colors.length, 30);
+  const dots = [];
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.39996, r = (R - 6) * Math.sqrt(i / Math.max(n, 1));
+    const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+    const c = colors[Math.floor(i / n * colors.length)] || [200, 200, 200];
+    dots.push(<circle key={i} cx={x} cy={y} r={3.1} fill={`rgb(${c.join(",")})`} opacity="0.9" />);
+  }
+  const rim = done ? "rgba(201,162,74,0.5)" : "rgba(255,255,255,0.18)";
+  const glow = done ? "#C9A24A" : "#BFD6F2";
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <defs><radialGradient id={mgId}><stop offset="0%" stopColor={glow} stopOpacity="0.22" /><stop offset="100%" stopColor={glow} stopOpacity="0" /></radialGradient></defs>
+      <circle cx={cx} cy={cy} r={R + 4} fill={`url(#${mgId})`} />
+      <circle cx={cx} cy={cy} r={R} fill="rgba(255,255,255,0.02)" stroke={rim} strokeWidth="1.2" />
+      {dots}
+    </svg>
+  );
+}
+
+const mkRaw = (T) => ({
+  page: { height: "100%", background: T.pageBg, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: "calc(env(safe-area-inset-top, 0px) + 8px)", paddingRight: 10, paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 10px)", paddingLeft: 10, boxSizing: "border-box", overflow: "hidden", fontFamily: 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif', color: T.hi },
+  screen: { width: "100%", maxWidth: 430, flex: 1, minHeight: 0, boxSizing: "border-box", overflow: "hidden", overscrollBehavior: "none", background: T.bg, borderRadius: 24, padding: "16px 20px 18px", border: `1px solid ${T.hair}`, display: "flex", flexDirection: "column", gap: 10 },
+  bar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  wordmark: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 3, color: T.lo },
+  mono: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 1, color: T.gold },
+  idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2 },
+  analyzeBtn: { width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
+  habits: { display: "flex", flexDirection: "column", gap: 4 },
+  habitTools: { display: "flex", justifyContent: "flex-end", alignItems: "center" },
+  animChip: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
+  animChipOn: { borderColor: T.gold, color: T.gold, background: "rgba(201,162,74,0.1)" },
+  editIcon: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
+  editIconOn: { background: T.gold, borderColor: T.gold },
+  editBadge: { position: "absolute", top: -4, left: -4, width: 22, height: 22, borderRadius: 999, background: T.gold, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, zIndex: 3, boxShadow: "0 1px 5px rgba(0,0,0,0.45)", animation: "badgePop .62s cubic-bezier(.2,.8,.3,1) both" },
+  idLabel: { fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 3, color: T.lo2 },
+  idName: { fontSize: 24, fontWeight: 600, letterSpacing: 1, marginTop: 6 },
+  stageWrap: { background: T.panel, borderRadius: 16, border: `1px solid ${T.hair}`, overflow: "hidden" },
+  orbPhotoCtrl: { position: "absolute", top: 10, right: 12, display: "flex", gap: 6, zIndex: 4 },
+  orbPhotoBtn: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: T.surface, color: T.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, fontSize: 17, lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.22)" },
+  frameTL: { position: "absolute", top: 11, left: 13, display: "flex", alignItems: "baseline", gap: 2, pointerEvents: "none" },
+  frameN: { fontSize: 19, fontWeight: 700, color: T.hi, fontFamily: "ui-monospace, Menlo, monospace", opacity: 0.85 },
+  frameU: { fontSize: 12, color: T.lo },
+  framePct: { fontSize: 12, fontWeight: 600, color: T.lo, marginLeft: 8, fontFamily: "ui-monospace, Menlo, monospace", letterSpacing: 0.3 },
+  dots: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 },
+  arrow: { background: "transparent", border: "none", color: T.lo, fontSize: 20, cursor: "pointer", padding: "10px 8px", lineHeight: 1 },
+  dot: { width: 8, height: 8, borderRadius: 999, border: "none", background: T.lo2, cursor: "pointer", padding: 0 },
+  dotOn: { background: T.gold, width: 18, borderRadius: 4 },
+  dotPlus: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", color: T.lo, fontSize: 12, cursor: "pointer", lineHeight: 1, padding: 0, marginLeft: 2, display: "flex", alignItems: "center", justifyContent: "center" },
+  grid: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "12px 20px", padding: "2px 0" },
+  cell: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 84 },
+  circleBtn: { position: "relative", width: 78, height: 78, borderRadius: "50%", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", userSelect: "none", touchAction: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", outline: "none", padding: 0 },
+  addCell: { width: 78, height: 78, borderRadius: "50%", background: T.cellGrad, border: `1px solid ${T.hair2}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
+  cellLabel: { fontSize: 11.5, color: T.hi, fontWeight: 500, textAlign: "center" },
+  hint: { fontSize: 10.5, color: T.lo2, textAlign: "center", fontFamily: "ui-monospace, monospace", marginTop: 2 },
+  overlay: { position: "fixed", inset: 0, background: T.overlayBg, backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, zIndex: 50, touchAction: "pan-y", overscrollBehavior: "contain" },
+  modal: { width: "100%", maxWidth: 380, background: T.modalBg, border: `1px solid ${T.hair2}`, borderRadius: 20, padding: 22, display: "flex", flexDirection: "column", gap: 16 },
+  mTitle: { fontSize: 16, fontWeight: 700, color: T.hi },
+  field: { display: "flex", flexDirection: "column", gap: 7 },
+  lab: { fontSize: 12, color: T.lo },
+  input: { background: T.surface, border: `1px solid ${T.hair2}`, borderRadius: 10, padding: "11px 12px", color: T.hi, fontSize: 14, fontFamily: "inherit", outline: "none" },
+  sliderRow: { display: "flex", alignItems: "center", gap: 14, marginTop: 4 },
+  slider: { flex: 1, accentColor: T.gold, height: 26, cursor: "pointer", touchAction: "none" },
+  sliderVal: { fontFamily: "ui-monospace, monospace", fontSize: 17, fontWeight: 700, color: T.gold, minWidth: 48, textAlign: "right" },
+  capNum: { fontFamily: "ui-monospace, monospace", fontSize: 18, color: T.gold, minWidth: 56, textAlign: "right" },
+  guess: { fontSize: 10.5, color: T.lo2, lineHeight: 1.5 },
+  create: { background: T.gold, border: "none", color: T.onGold, borderRadius: 12, padding: "13px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  mSub: { fontSize: 12, color: T.lo, lineHeight: 1.5, marginTop: -6 },
+  steps: { display: "flex", gap: 6, justifyContent: "center", marginBottom: 2 },
+  stepDot: { width: 22, height: 3, borderRadius: 2, background: T.hair2 },
+  stepOn: { background: T.gold },
+  introLabel: { fontFamily: "ui-monospace, monospace", fontSize: 10, letterSpacing: 4, color: T.lo2 },
+  introTitle: { fontSize: 19, fontWeight: 700, color: T.hi, letterSpacing: 0.5 },
+  introBody: { fontSize: 13.5, color: T.lo, lineHeight: 1.75 },
+  introSkip: { background: "transparent", border: "none", color: T.lo2, fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: 4 },
+  coach: { position: "relative", alignSelf: "center", background: "rgba(201,162,74,0.12)", border: `1px solid ${T.gold}`, color: T.gold, borderRadius: 999, padding: "7px 14px", fontSize: 12, fontWeight: 600, textAlign: "center", marginBottom: 2, animation: "coachpulse 1.8s ease-in-out infinite" },
+  coachArrow: { position: "absolute", bottom: -9, left: "50%", transform: "translateX(-50%)", color: T.gold, fontSize: 13, lineHeight: 1 },
+  addBtn: { background: T.surface2, border: `1px solid ${T.hair2}`, color: T.hi, borderRadius: 10, padding: "0 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  hList: { display: "flex", flexDirection: "column", gap: 7, maxHeight: 168, overflowY: "auto" },
+  hChip: { display: "flex", alignItems: "center", gap: 9, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 10, padding: "9px 11px", fontSize: 13 },
+  freqTag: { background: "rgba(201,162,74,0.12)", border: `1px solid rgba(201,162,74,0.3)`, color: T.gold, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  rm: { background: "transparent", border: "none", color: T.lo, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: "0 2px" },
+  empty: { fontSize: 12, color: T.lo2, textAlign: "center", padding: "10px 0" },
+  navRow: { display: "flex", gap: 8 },
+  back: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 12, padding: "13px 18px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
+  periodRow: { display: "flex", gap: 7 },
+  periodChip: { flex: 1, background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 9, padding: "9px 0", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  periodOn: { borderColor: T.gold, color: T.gold, background: "rgba(201,162,74,0.08)" },
+  typeRow: { display: "flex", gap: 8 },
+  typeBtn: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: `1px solid ${T.hair2}`, borderRadius: 12, padding: "13px 0", cursor: "pointer", fontFamily: "inherit" },
+  typeBtnOn: { borderColor: T.gold, background: "rgba(201,162,74,0.08)" },
+  typeDesc: { fontSize: 11.5, color: T.lo, textAlign: "center", lineHeight: 1.5, marginTop: -8 },
+  nameRow: { display: "flex", alignItems: "center", gap: 11 },
+  iconPreview: { width: 50, height: 50, borderRadius: "50%", border: "2px solid", background: T.surface, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
+  iconToggle: { alignSelf: "flex-start", background: "transparent", border: "none", color: T.gold, fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", padding: 0, marginTop: -8 },
+  detailToggle: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "transparent", border: "none", borderTop: `1px solid ${T.hair}`, color: T.lo, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", padding: "13px 2px 0" },
+  capBox: { background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 14, padding: "14px 16px", textAlign: "center" },
+  capLab: { fontSize: 11, color: T.lo, fontFamily: "ui-monospace, monospace", letterSpacing: 2 },
+  capBig: { fontSize: 34, fontWeight: 800, color: T.gold, fontFamily: "ui-monospace, monospace", marginTop: 2 },
+  capCalc: { fontSize: 10.5, color: T.lo2, marginTop: 6, lineHeight: 1.5 },
+  editRow: { display: "flex", justifyContent: "center", gap: 8 },
+  editBtn: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "7px 16px", fontSize: 12, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
+  mvBtn: { background: "transparent", border: "none", color: T.lo, fontSize: 13, cursor: "pointer", padding: "0 3px" },
+  iconGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, maxHeight: 200, overflowY: "auto", paddingRight: 2 },
+  iconCell: { aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 9, cursor: "pointer" },
+  iconOn: { borderColor: T.gold, background: "rgba(201,162,74,0.08)" },
+  emojiGrid: { display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 5, maxHeight: 168, overflowY: "auto", paddingRight: 2 },
+  emojiCell: { aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 8, cursor: "pointer" },
+  swRow: { display: "flex", gap: 9, flexWrap: "wrap" },
+  sw: { width: 26, height: 26, borderRadius: 999, border: "none", cursor: "pointer", padding: 0 },
+  wd: { flex: 1, background: T.surface, border: `1px solid ${T.hair}`, color: T.lo, borderRadius: 8, padding: "8px 0", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  wdOn: { borderColor: T.gold, color: T.gold, background: "rgba(201,162,74,0.1)" },
+  toggle: { width: 40, height: 24, borderRadius: 999, border: "none", cursor: "pointer", position: "relative", padding: 0, transition: "background .2s" },
+  knob: { position: "absolute", top: 3, left: 3, width: 18, height: 18, borderRadius: 999, background: "#fff", transition: "transform .2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" },
+  achOverlay: { position: "fixed", inset: 0, background: "radial-gradient(ellipse at center, #14110A 0%, #060607 70%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 28, zIndex: 60, animation: "achfade .6s ease" },
+  achGlow: { position: "absolute", width: 460, height: 460, borderRadius: "50%", background: "radial-gradient(circle, rgba(201,162,74,0.22) 0%, rgba(201,162,74,0) 65%)", animation: "achglow 3s ease-in-out infinite" },
+  achInner: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center", maxWidth: 360, width: "100%", animation: "achrise .8s cubic-bezier(.2,1,.3,1)" },
+  achLabel: { fontFamily: "ui-monospace, monospace", fontSize: 11, letterSpacing: 4, color: T.gold, opacity: 0.7 },
+  achBig: { fontSize: 56, fontWeight: 800, color: T.gold, letterSpacing: 2, textShadow: "0 0 40px rgba(201,162,74,0.5)", lineHeight: 1.1 },
+  achGoal: { fontSize: 19, fontWeight: 600, color: SK_HI, marginTop: 6 },
+  achGoal2: { fontSize: 27, fontWeight: 800, color: T.gold, letterSpacing: 1, lineHeight: 1.25, marginTop: 2, textShadow: "0 0 30px rgba(201,162,74,0.4)" },
+  achRule: { width: 40, height: 1, background: "rgba(201,162,74,0.45)", margin: "10px 0 4px" },
+  achSub: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: SK_LO, marginBottom: 8 },
+  achClose: { background: "transparent", border: "none", color: SK_LO, fontSize: 12, cursor: "pointer", marginTop: 4, fontFamily: "inherit" },
+  colBtn: { background: "rgba(201,162,74,0.1)", border: `1px solid rgba(201,162,74,0.3)`, color: T.gold, borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "ui-monospace, monospace" },
+  iconBtn: { background: "transparent", border: "none", padding: 4, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" },
+  setSection: { fontSize: 12, fontWeight: 700, color: T.gold, letterSpacing: 0.4, marginBottom: 6 },
+  swatchRow: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 },
+  swatchItem: { display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer" },
+  swatch: { width: 36, height: 36, borderRadius: 10, border: "1px solid", display: "flex", alignItems: "center", justifyContent: "center" },
+  swatchLab: { fontSize: 10, color: T.lo },
+  setHint: { fontSize: 12, color: T.lo, lineHeight: 1.6, marginBottom: 12 },
+  colGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 },
+  colItem: { display: "flex", flexDirection: "column", alignItems: "center", gap: 5, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 14, padding: "14px 8px" },
+  colName: { fontSize: 13, fontWeight: 600, color: T.hi, textAlign: "center" },
+  colMeta: { fontSize: 10.5, color: T.lo2, fontFamily: "ui-monospace, monospace" },
+  compRow: { display: "flex", alignItems: "center", gap: 10, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, color: T.hi },
+  compDot: { width: 11, height: 11, borderRadius: 999 },
+  compN: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.gold },
+  todayBand: { display: "flex", flexDirection: "column", gap: 12 },
+  dayRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 2 },
+  dayLab: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.lo, letterSpacing: 1 },
+  dayBtn: { background: "transparent", border: `1px solid ${T.hair}`, color: T.hi, borderRadius: 999, padding: "5px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  cellStatus: { fontSize: 10, fontFamily: "ui-monospace, monospace", marginTop: 1, textAlign: "center", lineHeight: 1.2 },
+  pips: { display: "flex", gap: 4, justifyContent: "center", marginTop: 4, height: 8, alignItems: "center" },
+  pip: { width: 7, height: 7, borderRadius: 999, background: "transparent", border: `1.5px solid ${T.pip}`, boxSizing: "border-box" },
+  timedBadge: { position: "absolute", bottom: -5, left: "50%", transform: "translateX(-50%)", background: T.surface, border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "1px 8px", fontSize: 10.5, fontWeight: 700, fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" },
+  emptyOver: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 8, padding: "0 24px" },
+  addOrbPlus: { background: "transparent", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2 },
+  addOrbLab: { fontSize: 13, color: T.lo, letterSpacing: 0.5 },
+  addHint: { fontSize: 12, color: T.lo2, textAlign: "center", lineHeight: 1.8, padding: "18px 0 8px" },
+  emptyBig: { fontSize: 26, fontWeight: 800, color: T.gold, letterSpacing: 1 },
+  emptySub: { fontSize: 13, color: T.lo, lineHeight: 1.7 },
+  achNote: { fontSize: 11.5, color: T.gold, opacity: 0.8, marginTop: -2, marginBottom: 4 },
+  noHabits: { display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "20px 24px 8px", textAlign: "center" },
+  noHabitsTxt: { fontSize: 13.5, color: T.lo, lineHeight: 1.8 },
+  streakBadge: { position: "absolute", top: -3, right: -4, background: T.gold, color: T.onGold, borderRadius: 999, minWidth: 18, height: 18, padding: "0 5px", display: "flex", alignItems: "center", justifyContent: "center", gap: 1, fontSize: 11, fontWeight: 800, fontFamily: "ui-monospace, monospace", boxShadow: "0 0 10px rgba(201,162,74,0.5)" },
+  linkBadge: { position: "absolute", top: -3, left: -4, width: 18, height: 18, borderRadius: 999, background: T.surface, border: `1px solid ${T.hair2}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", textDecoration: "none", zIndex: 2 },
+  clearLine: { textAlign: "center", color: T.gold, fontSize: 12.5, fontWeight: 600, letterSpacing: 1, marginTop: -6, marginBottom: 2, animation: "achfade .5s ease" },
+  gdProg: { marginTop: 4 },
+  gdBarBg: { height: 8, borderRadius: 999, background: T.track, overflow: "hidden" },
+  gdBarFill: { height: "100%", borderRadius: 999, transition: "width .4s ease" },
+  gdProgRow: { display: "flex", justifyContent: "space-between", marginTop: 6, fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.lo },
+  gdStats: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 },
+  gdStat: { background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 12, padding: "12px 6px", textAlign: "center" },
+  gdStatN: { fontSize: 20, fontWeight: 800, color: T.hi, fontFamily: "ui-monospace, monospace" },
+  gdStatL: { fontSize: 10, color: T.lo, marginTop: 2 },
+  gdHabit: { display: "flex", alignItems: "center", gap: 11, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 10, padding: "9px 12px" },
+  gdHabit2: { background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 12, padding: "11px 12px", display: "flex", flexDirection: "column", gap: 10 },
+  chartWrap: { background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 12, padding: "12px 12px 8px" },
+  chartFoot: { display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 9.5, color: T.lo, fontFamily: "ui-monospace, monospace" },
+  statRow: { display: "flex", gap: 8, borderTop: `1px solid ${T.hair}`, paddingTop: 9 },
+  statCell: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+  statNum: { fontSize: 18, fontWeight: 800, color: T.hi, fontFamily: "ui-monospace, monospace", lineHeight: 1 },
+  statU: { fontSize: 10, fontWeight: 400, color: T.lo },
+  statLab: { fontSize: 9.5, color: T.lo },
+  gdHName: { fontSize: 14, color: T.hi, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  gdHSub: { fontSize: 11, color: T.lo, fontFamily: "ui-monospace, monospace", marginTop: 1 },
+});
+// 全スタイルに「タップ時の四角ハイライト」「フォーカス枠」抑止を一括付与（取りこぼし防止）
+const NO_HL = { WebkitTapHighlightColor: "transparent", outline: "none", WebkitTouchCallout: "none" };
+const mk = (T) => { const o = mkRaw(T); for (const k in o) o[k] = { ...o[k], ...NO_HL }; return o; };
+const KEY = `.tsumiki-app, .tsumiki-app * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.tsumiki-app input, .tsumiki-app textarea { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+.tsumiki-app button, .tsumiki-app button:focus, .tsumiki-app button:focus-visible { outline: none; }
+.tsumiki-app img { -webkit-user-drag: none; user-drag: none; }
+@keyframes fillring { to { stroke-dashoffset: 0; } }
+@keyframes achfade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes achrise { 0% { opacity: 0; transform: translateY(16px) scale(.96) } 100% { opacity: 1; transform: translateY(0) scale(1) } }
+@keyframes achglow { 0%,100% { transform: scale(.9); opacity: .7 } 50% { transform: scale(1.08); opacity: 1 } }
+@keyframes btnglow { 0%,100% { box-shadow: 0 0 6px rgba(201,162,74,0.25) } 50% { box-shadow: 0 0 22px 3px rgba(201,162,74,0.6) } }
+@keyframes em1 { 0% { transform: rotate(-3.4deg) translate(-1.4px, -0.6px) } 50% { transform: rotate(3.4deg) translate(1.4px, 0.6px) } 100% { transform: rotate(-3.4deg) translate(-1.4px, -0.6px) } }
+@keyframes em2 { 0%,100% { transform: scale(1) } 50% { transform: scale(1.09) } }
+@keyframes em3 { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+@keyframes em4 { 0% { transform: rotate(-2deg) translateX(-1px) } 25% { transform: rotate(0deg) translateX(0) } 50% { transform: rotate(2deg) translateX(1px) } 75% { transform: rotate(0deg) translateX(0) } 100% { transform: rotate(-2deg) translateX(-1px) } }
+@keyframes badgePop { 0% { transform: scale(0); opacity: 0 } 60% { opacity: 1 } 100% { transform: scale(1); opacity: 1 } }
+@keyframes cellIn { 0% { transform: scale(.7); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
+@keyframes coachpulse { 0%,100% { opacity: .82; transform: translateY(0) } 50% { opacity: 1; transform: translateY(2px) } }
+@keyframes orbInNext { from { transform: translateX(108%); opacity: .35 } to { transform: translateX(0); opacity: 1 } }
+@keyframes orbOutNext { from { transform: translateX(-50%) translateX(0); opacity: 1 } to { transform: translateX(-50%) translateX(-108%); opacity: 0 } }
+@keyframes orbInPrev { from { transform: translateX(-108%); opacity: .35 } to { transform: translateX(0); opacity: 1 } }
+@keyframes orbOutPrev { from { transform: translateX(-50%) translateX(0); opacity: 1 } to { transform: translateX(-50%) translateX(108%); opacity: 0 } }`;
+
+createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
