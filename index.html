@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0B0C10" />
-<title>TSUMIKI</title>
+<title>GrainME</title>
 <style>
   html, body, #root { height: 100%; margin: 0; }
   html, body { position: fixed; width: 100%; overflow: hidden; overscroll-behavior: none; touch-action: none; }
@@ -23,7 +23,7 @@
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 </head>
 <body>
-<div id="root"><div id="loading">TSUMIKI を読み込み中…</div></div>
+<div id="root"><div id="loading">GrainME を読み込み中…</div></div>
 <script type="text/babel" data-type="module" data-presets="react">
 import React from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
@@ -444,10 +444,6 @@ export default function App() {
 
   const canvasRef = useRef(null);
   const stageRef = useRef(null), trackRef = useRef(null); // ドラッグ追従カルーセル
-  const orbWrapRef = useRef(null); // ライブcanvasのラッパー（ドラッグ中に平行移動）
-  const prevCarRef = useRef(0); // 前フレームのカルーセル位置
-  const carVelRef = useRef(0); // 前フレームのカルーセル速度（加速度算出用）
-  const sloshAccRef = useRef(0); // 平滑化したスロッシュ加速度
   const dragRef = useRef(null); // 進行中ドラッグの生データ（再描画を避けるためref）
   const ballsBy = useRef({});
   const orbRef = useRef(orbPal);
@@ -548,15 +544,6 @@ export default function App() {
     const step = () => {
       const gi = pageRef.current, g = goalsRef.current[gi];
       const ctx2 = cv.getContext("2d");
-      // 器スクロールに連動した横スロッシュ：ドラッグの「加速度」を疑似慣性として粒へ
-      // （等速移動中は水平に戻り、動き出し・止め・方向転換で揺れる＝自然）
-      const dr = dragRef.current, dragging = !!(dr && dr.decided === "h");
-      const carX = dragging ? (dr.x || 0) : 0;
-      const vCar = carX - prevCarRef.current; prevCarRef.current = carX;
-      const aCar = vCar - carVelRef.current; carVelRef.current = vCar;
-      sloshAccRef.current = sloshAccRef.current * 0.6 + aCar * 0.4; // 平滑化でノイズ抑制
-      const ax = dragging ? Math.max(-1.4, Math.min(1.4, -sloshAccRef.current * 0.16)) : 0;
-      if (!dragging) { carVelRef.current = 0; sloshAccRef.current = 0; }
       if (gi < 0 || !g) {
         const A = ambRef.current;
         if (!A.balls) {
@@ -564,11 +551,10 @@ export default function App() {
           for (let i = 0; i < AMB_N; i++) A.balls.push({ x: CX + (Math.random() - 0.5) * 2 * (CR - AMB_R) * 0.8, y: CY - CR * 0.6 + Math.random() * CR * 0.7, vx: 0, vy: 0, c: PAL[i % PAL.length], born: 0 });
           A.sim = 1400; A.calm = 0;
         }
-        if (dragging) { A.sim = Math.max(A.sim, 8); A.calm = 0; }
         if (A.sim > 0) {
           const ab = A.balls, DAMP = 0.86, RW = 0.1;
           const wall = (b) => { const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01; if (d + AMB_R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - AMB_R); b.y = CY + ny * (CR - AMB_R); const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= (1 + RW) * vn * nx; b.vy -= (1 + RW) * vn * ny; } } };
-          for (const b of ab) { b.vy += GRAV; b.vx += ax; b.vx *= DAMP; b.vy *= DAMP; b.x += b.vx; b.y += b.vy; wall(b); }
+          for (const b of ab) { b.vy += GRAV; b.vx *= DAMP; b.vy *= DAMP; b.x += b.vx; b.y += b.vy; wall(b); }
           let maxOv = 0;
           for (let it = 0; it < 8; it++) {
             maxOv = 0;
@@ -580,7 +566,7 @@ export default function App() {
           }
           let maxV2 = 0; for (const b of ab) { const v2 = b.vx * b.vx + b.vy * b.vy; if (v2 > maxV2) maxV2 = v2; }
           A.sim--;
-          if (maxV2 < 0.03 && maxOv < 0.4 && !dragging) { if (++A.calm > 24) A.sim = 0; } else A.calm = 0; // 重なりが消える＆ドラッグ終了まで静止しない
+          if (maxV2 < 0.03 && maxOv < 0.4) { if (++A.calm > 24) A.sim = 0; } else A.calm = 0; // 重なりが消えるまで静止しない
         }
         drawOrb(ctx, A.balls, AMB_R, AMB_CAP, performance.now(), orbRef.current, undefined, goldRef.current, true);
         raf = requestAnimationFrame(step); return;
@@ -588,10 +574,9 @@ export default function App() {
       const cap = capOf(g);
       const R = grainR(cap || 30), bs = ballsBy.current[g.id] || [];
       const sim = simState.current[g.id] || (simState.current[g.id] = { active: 360, calm: 0 });
-      if (dragging) { sim.active = Math.max(sim.active, 8); sim.calm = 0; }
       if (sim.active > 0) {
       for (const b of bs) {
-        b.vy += GRAV; b.vx += ax; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
+        b.vy += GRAV; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
         const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01;
         if (d + R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - R); b.y = CY + ny * (CR - R); const vn = b.vx * nx + b.vy * ny; b.vx -= (1 + REST) * vn * nx; b.vy -= (1 + REST) * vn * ny; }
       }
@@ -917,49 +902,33 @@ export default function App() {
         dr.decided = "hf";
       } else {
         dr.decided = "h";
-        prevCarRef.current = 0;
-        const cg = goalsRef.current[curGi]; if (cg) wake(cg.id); // ライブ物理を起こしてスロッシュさせる
         setDrag({ urls, w });
       }
       return;
     }
-    if (dr.decided === "h") {
-      dr.x = dx;
-      if (trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + dx}px)`;
-      if (orbWrapRef.current) { orbWrapRef.current.style.transition = ""; orbWrapRef.current.style.transform = `translateX(${dx}px)`; orbWrapRef.current.style.opacity = "1"; }
-    }
+    if (dr.decided === "h" && trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + (dr.x = dx)}px)`;
     if (dr.decided === "hf") dr.x = dx;
   };
-  const resetOrbWrap = () => { const ow = orbWrapRef.current; if (ow) { ow.style.transition = ""; ow.style.transform = ""; ow.style.opacity = ""; } };
   const onStageUp = () => {
-    const dr = dragRef.current; dragRef.current = null; prevCarRef.current = 0;
+    const dr = dragRef.current; dragRef.current = null;
     if (!dr) return;
     if (dr.decided === "hf") {
       const w = dr.w || 320, x = dr.x || 0;
       if (x < -w * 0.22) setPage(dr.nextPos); else if (x > w * 0.22) setPage(dr.prevPos);
       return;
     }
-    if (dr.decided !== "h") { resetOrbWrap(); return; }
-    const w = dr.w, x = dr.x || 0, tr = trackRef.current, ow = orbWrapRef.current;
+    if (dr.decided !== "h") return;
+    const w = dr.w, x = dr.x || 0, tr = trackRef.current;
     const commit = x < -w * 0.22 ? 1 : x > w * 0.22 ? -1 : 0; // 22%超で確定
-    const EASE = "transform .28s cubic-bezier(.22,1,.3,1)";
-    if (commit === 0) { // 戻す：ライブのままスロッシュを見せつつ中央へ
-      if (ow) { ow.style.transition = EASE; ow.style.transform = "translateX(0px)"; }
-      if (tr) { tr.style.transition = EASE; tr.style.transform = `translateX(${-w}px)`; }
-      setTimeout(() => { resetOrbWrap(); setDrag(null); }, 300);
-      return;
-    }
-    // 隣へ確定：ライブを隠してスナップショットのトラックで送る
-    if (ow) ow.style.opacity = "0";
-    const finish = () => { resetOrbWrap(); if (commit === 1) setPage(dr.nextPos); else setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
+    const finish = () => { if (commit === 1) setPage(dr.nextPos); else if (commit === -1) setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
     if (tr) {
-      tr.style.transition = EASE;
-      tr.style.transform = `translateX(${commit === 1 ? -2 * w : 0}px)`;
+      tr.style.transition = "transform .28s cubic-bezier(.22,1,.3,1)";
+      tr.style.transform = `translateX(${commit === 1 ? -2 * w : commit === -1 ? 0 : -w}px)`;
       let done = false; const h = () => { if (done) return; done = true; tr.removeEventListener("transitionend", h); finish(); };
       tr.addEventListener("transitionend", h); setTimeout(h, 380);
     } else finish();
   };
-  const onStageCancel = () => { if (dragRef.current?.decided === "h") { dragRef.current = null; prevCarRef.current = 0; resetOrbWrap(); setDrag(null); } else dragRef.current = null; };
+  const onStageCancel = () => { if (dragRef.current?.decided === "h") { dragRef.current = null; setDrag(null); } else dragRef.current = null; };
   // 今日の各習慣の状態。week=週◯回（毎日は強制しない）、それ以外＝毎日・曜日（今日やるべき必須枠）
   const todayStatuses = hasGoal ? g.habits.map((h, i) => ({ st: habitStatus(curGi, i), week: (h.fmode || "daily") === "week" })) : [];
   const reqOpen = todayStatuses.some(({ st, week }) => st.ok && !week); // 毎日・曜日に未完が残っている
@@ -1108,7 +1077,7 @@ export default function App() {
       <style>{KEY}</style>
       <div style={{ ...s.screen, gap: 10, padding: "16px 20px 18px", touchAction: "none" }} onPointerDown={onStageDown} onPointerMove={onStageMove} onPointerUp={onStageUp} onPointerCancel={onStageCancel}>
         <div style={s.bar}>
-          <span style={s.wordmark}>TSUMIKI</span>
+          <span style={s.wordmark}>GrainME</span>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button style={s.colBtn} onClick={() => setShowCol(true)}>✦ {collection.length}</button>
             <button style={s.iconBtn} aria-label="設定" onClick={() => { setIoMsg(""); setShowSettings(true); }}><Settings size={17} color={T.lo} strokeWidth={2} /></button>
@@ -1131,7 +1100,7 @@ export default function App() {
         </div>
 
         <div ref={stageRef} style={{ ...s.stageWrap, position: "relative" }}>
-          <div ref={orbWrapRef} style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: 1 }}>
+          <div style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: drag ? 0 : 1 }}>
             <canvas ref={canvasRef} style={{ width: 320, height: 300, maxWidth: "100%", display: "block", margin: "0 auto" }} />
           </div>
           {trans && <img src={trans.url} alt="" onAnimationEnd={() => setTrans(null)} style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 320, height: 300, maxWidth: "100%", pointerEvents: "none", animation: `${trans.dir > 0 ? "orbOutNext" : "orbOutPrev"} .3s cubic-bezier(.22,1,.3,1) forwards` }} />}
@@ -1159,11 +1128,11 @@ export default function App() {
           )}
           {drag && (
             <div ref={trackRef} style={{ position: "absolute", top: 0, left: 0, width: drag.w * 3, height: 300, transform: `translateX(${-drag.w}px)`, willChange: "transform", pointerEvents: "none" }}>
-              {drag.urls.map((u, k) => (k === 1 ? null : (
+              {drag.urls.map((u, k) => (
                 <div key={k} style={{ position: "absolute", top: 0, left: k * drag.w, width: drag.w, height: 300, display: "flex", justifyContent: "center" }}>
                   <img src={u} alt="" style={{ width: 320, maxWidth: "100%", height: 300, display: "block" }} />
                 </div>
-              )))}
+              ))}
             </div>
           )}
         </div>
@@ -1294,7 +1263,7 @@ export default function App() {
             <div style={s.steps}>{[0, 1, 2, 3].map((n) => <span key={n} style={{ ...s.stepDot, ...(n <= introStep ? s.stepOn : {}) }} />)}</div>
             {introStep === 0 && (<>
               <div style={{ margin: "2px 0" }}><MiniOrb colors={[]} size={132} done={false} /></div>
-              <div style={s.introLabel}>TSUMIKI</div>
+              <div style={s.introLabel}>GrainME</div>
               <div style={s.introTitle}>なりたい自分を、器に。</div>
               <div style={s.introBody}>「なりたい自分」をひとつ決めます。たとえば「いい体の自分」。それが、からっぽの器になります。</div>
             </>)}
