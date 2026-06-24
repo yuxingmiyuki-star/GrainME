@@ -552,19 +552,21 @@ export default function App() {
           A.sim = 1400; A.calm = 0;
         }
         if (A.sim > 0) {
-          const ab = A.balls, DAMP = 0.9, RW = 0.12;
+          const ab = A.balls, DAMP = 0.86, RW = 0.1;
           const wall = (b) => { const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01; if (d + AMB_R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - AMB_R); b.y = CY + ny * (CR - AMB_R); const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= (1 + RW) * vn * nx; b.vy -= (1 + RW) * vn * ny; } } };
           for (const b of ab) { b.vy += GRAV; b.vx *= DAMP; b.vy *= DAMP; b.x += b.vx; b.y += b.vy; wall(b); }
-          for (let it = 0; it < 4; it++) {
+          let maxOv = 0;
+          for (let it = 0; it < 8; it++) {
+            maxOv = 0;
             for (let i = 0; i < ab.length; i++) for (let j = i + 1; j < ab.length; j++) {
-              const a = ab[i], b = ab[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, ov = 2 * AMB_R - d;
-              if (ov > 0) { const nx = dx / d, ny = dy / d, p = ov * 0.5; a.x -= nx * p; a.y -= ny * p; b.x += nx * p; b.y += ny * p; }
+              const a = ab[i], b = ab[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), ov = 2 * AMB_R - (d || 0.0001);
+              if (ov > 0) { if (ov > maxOv) maxOv = ov; let nx, ny; if (d < 0.001) { const t = Math.random() * 6.283; nx = Math.cos(t); ny = Math.sin(t); } else { nx = dx / d; ny = dy / d; } const p = ov * 0.5; a.x -= nx * p; a.y -= ny * p; b.x += nx * p; b.y += ny * p; }
             }
             for (const b of ab) wall(b); // 各反復後に壁内へ戻す＝下の粒が欠けない
           }
           let maxV2 = 0; for (const b of ab) { const v2 = b.vx * b.vx + b.vy * b.vy; if (v2 > maxV2) maxV2 = v2; }
           A.sim--;
-          if (maxV2 < 0.04) { if (++A.calm > 30) A.sim = 0; } else A.calm = 0;
+          if (maxV2 < 0.03 && maxOv < 0.4) { if (++A.calm > 24) A.sim = 0; } else A.calm = 0; // 重なりが消えるまで静止しない
         }
         drawOrb(ctx, A.balls, AMB_R, AMB_CAP, performance.now(), orbRef.current, undefined, goldRef.current, true);
         raf = requestAnimationFrame(step); return;
