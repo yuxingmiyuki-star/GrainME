@@ -806,17 +806,29 @@ export default function App() {
       const nextPos = (slotPos + 1) % MAX_GOALS;
       const w = stageRef.current?.getBoundingClientRect().width || 320;
       const urls = [slotSnap(slots[prevPos]), slotSnap(slots[slotPos]), slotSnap(slots[nextPos])];
-      if (urls.some((u) => !u)) { dr.decided = "v"; return; } // 画像化できない環境はドラッグ無効
-      dr.decided = "h"; dr.w = w; dr.prevPos = prevPos; dr.nextPos = nextPos;
+      dr.prevPos = prevPos; dr.nextPos = nextPos; dr.w = w;
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
-      setDrag({ urls, w });
+      if (urls.some((u) => !u)) {
+        // 画像化できない環境：アニメ無しのフォールバック（スワイプでページ送りだけは効く）
+        dr.decided = "hf";
+      } else {
+        dr.decided = "h";
+        setDrag({ urls, w });
+      }
       return;
     }
     if (dr.decided === "h" && trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + (dr.x = dx)}px)`;
+    if (dr.decided === "hf") dr.x = dx;
   };
   const onStageUp = () => {
     const dr = dragRef.current; dragRef.current = null;
-    if (!dr || dr.decided !== "h") return;
+    if (!dr) return;
+    if (dr.decided === "hf") {
+      const w = dr.w || 320, x = dr.x || 0;
+      if (x < -w * 0.22) setPage(dr.nextPos); else if (x > w * 0.22) setPage(dr.prevPos);
+      return;
+    }
+    if (dr.decided !== "h") return;
     const w = dr.w, x = dr.x || 0, tr = trackRef.current;
     const commit = x < -w * 0.22 ? 1 : x > w * 0.22 ? -1 : 0; // 22%超で確定
     const finish = () => { if (commit === 1) setPage(dr.nextPos); else if (commit === -1) setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
@@ -1063,22 +1075,24 @@ export default function App() {
         ) : (
         <div style={{ ...s.habits, gap: compact === 2 ? 2 : compact === 1 ? 3 : 4 }}>
           {showCoach && !editMode && <div style={s.coach}>アイコンを長押しすると、器にひと粒落ちます<span style={s.coachArrow}>▾</span></div>}
-          <div style={{ ...s.grid, gap: compact === 2 ? 4 : compact === 1 ? 8 : 12 }}>
-          {habitRows.map((row, ri) => {
-            const two = row.length === 2; // 2個の行は画面を3分割するように散らす
-            return (
-            <div key={ri} style={two
-              ? { ...s.gridRow, width: "100%", justifyContent: "space-evenly" }
-              : { ...s.gridRow, gap: compact === 2 ? "0 24px" : compact === 1 ? "0 32px" : "0 40px" }}>
-              {row.map((it) => it.add ? (
-                <div key="add" style={{ ...s.cell, animation: "cellIn .58s cubic-bezier(.2,.8,.3,1) both" }}>
-                  <button style={s.addCell} onClick={openAdd}><Plus size={26} color={T.gold} strokeWidth={2} /></button>
-                  <span style={s.cellLabel}>追加</span>
-                </div>
-              ) : renderHabitCell(it.h, it.i))}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <div style={{ ...s.grid, gap: compact === 2 ? 4 : compact === 1 ? 8 : 12 }}>
+            {habitRows.map((row, ri) => {
+              const two = row.length === 2; // 2個の行は画面を3分割するように散らす
+              return (
+              <div key={ri} style={two
+                ? { ...s.gridRow, width: "100%", justifyContent: "space-evenly" }
+                : { ...s.gridRow, gap: compact === 2 ? "0 24px" : compact === 1 ? "0 32px" : "0 40px" }}>
+                {row.map((it) => it.add ? (
+                  <div key="add" style={{ ...s.cell, animation: "cellIn .58s cubic-bezier(.2,.8,.3,1) both" }}>
+                    <button style={s.addCell} onClick={openAdd}><Plus size={26} color={T.gold} strokeWidth={2} /></button>
+                    <span style={s.cellLabel}>追加</span>
+                  </div>
+                ) : renderHabitCell(it.h, it.i))}
+              </div>
+              );
+            })}
             </div>
-            );
-          })}
           </div>
           <div style={s.habitTools}>
             <button style={{ ...s.editIcon, ...(editMode ? s.editIconOn : {}) }} onClick={() => setEditMode((m) => !m)} aria-label={editMode ? "完了" : "習慣を編集"}>
@@ -1763,7 +1777,7 @@ const mkRaw = (T) => ({
   mono: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 1, color: T.gold },
   idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2 },
   analyzeBtn: { width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
-  habits: { display: "flex", flexDirection: "column", gap: 4, flex: 1, justifyContent: "space-between" },
+  habits: { display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0 },
   habitTools: { display: "flex", justifyContent: "flex-start", alignItems: "center" },
   animChip: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
   animChipOn: { borderColor: T.gold, color: T.gold, background: `${T.gold}1a` },
@@ -1784,7 +1798,7 @@ const mkRaw = (T) => ({
   dot: { width: 8, height: 8, borderRadius: 999, border: "none", background: T.lo2, cursor: "pointer", padding: 0 },
   dotOn: { background: T.gold, width: 18, borderRadius: 4 },
   dotPlus: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", color: T.lo, fontSize: 12, cursor: "pointer", lineHeight: 1, padding: 0, marginLeft: 2, display: "flex", alignItems: "center", justifyContent: "center" },
-  grid: { display: "flex", flexDirection: "column", alignItems: "center", padding: "2px 0", flex: 1, justifyContent: "center" },
+  grid: { display: "flex", flexDirection: "column", alignItems: "center", padding: "2px 0" },
   gridRow: { display: "flex", justifyContent: "center", alignItems: "flex-start" },
   cell: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 84 },
   circleBtn: { position: "relative", width: 78, height: 78, borderRadius: "50%", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", userSelect: "none", touchAction: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", outline: "none", padding: 0 },
@@ -1875,7 +1889,7 @@ const mkRaw = (T) => ({
   compRow: { display: "flex", alignItems: "center", gap: 10, background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 9, padding: "9px 12px", fontSize: 13, color: T.hi },
   compDot: { width: 11, height: 11, borderRadius: 999 },
   compN: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.gold },
-  todayBand: { display: "flex", flexDirection: "column", gap: 12 },
+  todayBand: { display: "flex", flexDirection: "column", gap: 12, flex: 1, minHeight: 0 },
   dayRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 2 },
   dayLab: { fontFamily: "ui-monospace, monospace", fontSize: 12, color: T.lo, letterSpacing: 1 },
   dayBtn: { background: "transparent", border: `1px solid ${T.hair}`, color: T.hi, borderRadius: 999, padding: "5px 14px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
