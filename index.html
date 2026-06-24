@@ -128,8 +128,8 @@ const EM_LABELS = { 1: "傾く", 2: "弾む", 3: "縦ゆれ", 4: "ぐらり" };
 const MAX_HABITS = 6; // 1ゴールあたりの習慣の上限
 const MAX_GOALS = 4; // 同時に持てる「なりたい自分」の器の数
 const CX = 160, CY = 158, CR = 116, GRAV = 0.5, REST = 0.26, FRIC = 0.99;
-// 追加前の空きスロット専用：小さなプレビュー粒を物理で積もらせる（下1/3ほど）
-const AMB_R = 7, AMB_N = 60, AMB_CAP = 180;
+// 追加前の空きスロット専用：小さなプレビュー粒を物理で積もらせる
+const AMB_R = 7, AMB_N = 40, AMB_CAP = 180;
 
 const grainR = (cap) => Math.max(5, Math.min(22, CR * Math.sqrt(0.62 / cap)));
 // 1つのオーブを描く（RAFの本描画と、隣ゴールのスナップショット生成で共用）
@@ -548,23 +548,23 @@ export default function App() {
         const A = ambRef.current;
         if (!A.balls) {
           A.balls = [];
-          for (let i = 0; i < AMB_N; i++) A.balls.push({ x: CX + (Math.random() - 0.5) * 2 * (CR - AMB_R) * 0.85, y: CY - CR * 0.55 + Math.random() * CR * 0.95, vx: (Math.random() - 0.5) * 0.5, vy: Math.random() * 0.6, c: PAL[i % PAL.length], born: 0 });
+          for (let i = 0; i < AMB_N; i++) A.balls.push({ x: CX + (Math.random() - 0.5) * 2 * (CR - AMB_R) * 0.8, y: CY - CR * 0.6 + Math.random() * CR * 0.7, vx: 0, vy: 0, c: PAL[i % PAL.length], born: 0 });
           A.sim = 1400; A.calm = 0;
         }
         if (A.sim > 0) {
-          const ab = A.balls;
-          for (const b of ab) {
-            b.vy += GRAV; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
-            const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01;
-            if (d + AMB_R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - AMB_R); b.y = CY + ny * (CR - AMB_R); const vn = b.vx * nx + b.vy * ny; b.vx -= (1 + REST) * vn * nx; b.vy -= (1 + REST) * vn * ny; }
-          }
-          for (let it = 0; it < 3; it++) for (let i = 0; i < ab.length; i++) for (let j = i + 1; j < ab.length; j++) {
-            const a = ab[i], b = ab[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, ov = 2 * AMB_R - d;
-            if (ov > 0) { const nx = dx / d, ny = dy / d, p = ov / 2; a.x -= nx * p; a.y -= ny * p; b.x += nx * p; b.y += ny * p; const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny; if (vn < 0) { const imp = -(1 + REST) * vn / 2; a.vx -= imp * nx; a.vy -= imp * ny; b.vx += imp * nx; b.vy += imp * ny; } }
+          const ab = A.balls, DAMP = 0.9, RW = 0.12;
+          const wall = (b) => { const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01; if (d + AMB_R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - AMB_R); b.y = CY + ny * (CR - AMB_R); const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= (1 + RW) * vn * nx; b.vy -= (1 + RW) * vn * ny; } } };
+          for (const b of ab) { b.vy += GRAV; b.vx *= DAMP; b.vy *= DAMP; b.x += b.vx; b.y += b.vy; wall(b); }
+          for (let it = 0; it < 4; it++) {
+            for (let i = 0; i < ab.length; i++) for (let j = i + 1; j < ab.length; j++) {
+              const a = ab[i], b = ab[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01, ov = 2 * AMB_R - d;
+              if (ov > 0) { const nx = dx / d, ny = dy / d, p = ov * 0.5; a.x -= nx * p; a.y -= ny * p; b.x += nx * p; b.y += ny * p; }
+            }
+            for (const b of ab) wall(b); // 各反復後に壁内へ戻す＝下の粒が欠けない
           }
           let maxV2 = 0; for (const b of ab) { const v2 = b.vx * b.vx + b.vy * b.vy; if (v2 > maxV2) maxV2 = v2; }
           A.sim--;
-          if (maxV2 < 0.02) { if (++A.calm > 45) A.sim = 0; } else A.calm = 0;
+          if (maxV2 < 0.04) { if (++A.calm > 30) A.sim = 0; } else A.calm = 0;
         }
         drawOrb(ctx, A.balls, AMB_R, AMB_CAP, performance.now(), orbRef.current, undefined, goldRef.current, true);
         raf = requestAnimationFrame(step); return;
