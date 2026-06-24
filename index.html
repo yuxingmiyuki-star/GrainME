@@ -861,10 +861,10 @@ export default function App() {
   const hcEff = hc + (showAddCell ? 1 : 0); // レイアウト計算用の実効セル数
   const compact = hcEff >= 4 ? 1 : 0; // 0=通常（〜3個） 1=詰め（4〜6個）
   // 習慣数（追加セル含む）でアイコンの大きさを段階的に変える：少ないほど大きく
-  const cellSize = hcEff <= 1 ? { D: 104, icon: 34, emoji: 36, w: 116 }
-    : hcEff === 2 ? { D: 92, icon: 30, emoji: 32, w: 104 }
-    : hcEff <= 4 ? { D: 78, icon: 25, emoji: 26, w: 88 }
-    : { D: 68, icon: 22, emoji: 23, w: 78 };
+  const cellSize = hcEff <= 1 ? { D: 160, icon: 54, emoji: 54, w: 174 }
+    : hcEff === 2 ? { D: 142, icon: 48, emoji: 48, w: 156 }
+    : hcEff <= 4 ? { D: 120, icon: 41, emoji: 40, w: 132 }
+    : { D: 88, icon: 30, emoji: 30, w: 98 };
   // 行の分け方：1〜2個は1行、3〜4個は2行(2+1 / 2+2)、5〜6個は2行(3+2 / 3+3)
   const habitRows = (() => {
     const items = hasGoal ? g.habits.map((h, i) => ({ h, i })) : [];
