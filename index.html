@@ -128,8 +128,8 @@ const EM_LABELS = { 1: "傾く", 2: "弾む", 3: "縦ゆれ", 4: "ぐらり" };
 const MAX_HABITS = 6; // 1ゴールあたりの習慣の上限
 const MAX_GOALS = 4; // 同時に持てる「なりたい自分」の器の数
 const CX = 160, CY = 158, CR = 116, GRAV = 0.5, REST = 0.26, FRIC = 0.99;
-// 追加前の空きスロット専用：小さなプレビュー粒を物理で積もらせる
-const AMB_R = 7, AMB_N = 8, AMB_CAP = 64;
+// 追加前の空きスロット専用：小さなプレビュー粒を物理で積もらせる（下1/3ほど）
+const AMB_R = 7, AMB_N = 60, AMB_CAP = 180;
 
 const grainR = (cap) => Math.max(5, Math.min(22, CR * Math.sqrt(0.62 / cap)));
 // 1つのオーブを描く（RAFの本描画と、隣ゴールのスナップショット生成で共用）
@@ -453,6 +453,7 @@ export default function App() {
   const allClearRef = useRef(false), lastClear = useRef(false);
   const simState = useRef({}); // goalId -> { active: framesLeft, calm: calmFrames }
   const ambRef = useRef({ balls: null, sim: 0, calm: 0 }); // 追加前スロットのプレビュー粒（物理で積もる）
+  const timedPress = useRef(null); // タイマー習慣の押下状態 {mode:"start"|"hold", ...}
   const dotHoldRef = useRef(null); // dotsバー長押しタイマー
   const hHoldRef = useRef(null); // 習慣長押しタイマー
   const gmItemRefs = useRef([]); // 器管理オーバーレイのスロットref
@@ -547,8 +548,8 @@ export default function App() {
         const A = ambRef.current;
         if (!A.balls) {
           A.balls = [];
-          for (let i = 0; i < AMB_N; i++) A.balls.push({ x: CX + (Math.random() - 0.5) * 60, y: CY - 56 + (Math.random() - 0.5) * 34, vx: (Math.random() - 0.5) * 0.6, vy: Math.random() * 0.4, c: PAL[i % PAL.length], born: 0 });
-          A.sim = 900; A.calm = 0;
+          for (let i = 0; i < AMB_N; i++) A.balls.push({ x: CX + (Math.random() - 0.5) * 2 * (CR - AMB_R) * 0.85, y: CY - CR * 0.55 + Math.random() * CR * 0.95, vx: (Math.random() - 0.5) * 0.5, vy: Math.random() * 0.6, c: PAL[i % PAL.length], born: 0 });
+          A.sim = 1400; A.calm = 0;
         }
         if (A.sim > 0) {
           const ab = A.balls;
@@ -563,7 +564,7 @@ export default function App() {
           }
           let maxV2 = 0; for (const b of ab) { const v2 = b.vx * b.vx + b.vy * b.vy; if (v2 > maxV2) maxV2 = v2; }
           A.sim--;
-          if (maxV2 < 0.02) { if (++A.calm > 30) A.sim = 0; } else A.calm = 0;
+          if (maxV2 < 0.02) { if (++A.calm > 45) A.sim = 0; } else A.calm = 0;
         }
         drawOrb(ctx, A.balls, AMB_R, AMB_CAP, performance.now(), orbRef.current, undefined, goldRef.current, true);
         raf = requestAnimationFrame(step); return;
@@ -665,19 +666,55 @@ export default function App() {
       setHeld(-1); timer.current = null;
     }, HOLD);
   };
-  // timed task: tap to run a timer, grain on completion (demo-compressed)
+  // タイマー習慣：タップで開始 → 実時間カウント。走行中は長押し(HOLD)で途中完了、クイックタップで中止
   const startTimer = (i) => {
     const gi = pageRef.current, g = goalsRef.current[gi], key = g.id + ":" + g.habits[i].id;
-    if (timing && timing.key === key) { clearTimeout(timing.to); setTiming(null); return; } // cancel
-    if (timing) return; // another timer running
+    if (timing && timing.key === key) { clearTimeout(timing.to); setTiming(null); return; } // 走行中タップ＝中止
+    if (timing) return; // 同時に走らせるのは1つだけ
     if (!habitStatus(gi, i).ok) return;
     ensure();
     const mins = Math.max(1, goalsRef.current[gi].habits[i].min || 5);
-    const dur = Math.min(Math.max(mins * 0.2, 1.5), 6) * 1000; // demo speed
+    const dur = mins * 60 * 1000; // 実時間
+    const startAt = Date.now(), endAt = startAt + dur;
     const to = setTimeout(() => { chime(); navigator.vibrate?.([7, 16, 11]); addGrain(gi, i); setTiming(null); }, dur);
-    setTiming({ key, dur, to });
+    setTiming({ key, dur, to, gi, i, startAt, endAt });
+  };
+  // タイマー習慣の押下：未走行ならタップで開始、走行中なら長押しで完了
+  const timedDown = (i) => (e) => {
+    e.preventDefault();
+    const gi = pageRef.current, g = goalsRef.current[gi]; if (!g) return;
+    const key = g.id + ":" + g.habits[i].id;
+    const isRunning = !!(timing && timing.key === key);
+    if (!isRunning) { timedPress.current = { mode: "start", i }; startTimer(i); return; }
+    if (held !== -1) return;
+    timedPress.current = { mode: "hold", i, key, gi };
+    setHeld(i); startSimmer();
+    timer.current = setTimeout(() => {
+      stopSimmer(0.02); chime(); navigator.vibrate?.([7, 16, 11]);
+      setTiming((t) => { if (t && t.key === key) clearTimeout(t.to); return null; });
+      addGrain(gi, i);
+      setHeld(-1); timer.current = null; timedPress.current = null;
+    }, HOLD);
+  };
+  const timedUp = (i) => () => {
+    const p = timedPress.current; timedPress.current = null;
+    if (p && p.mode === "hold" && timer.current) { // 完了前に離した＝クイックタップ＝中止
+      clearTimeout(timer.current); timer.current = null; stopSimmer(); setHeld(-1);
+      setTiming((t) => { if (t && t.key === p.key) { clearTimeout(t.to); return null; } return t; });
+    }
   };
   const up = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; stopSimmer(); } setHeld(-1); };
+  // バックグラウンドで setTimeout が止まっても、復帰時に完了時刻を過ぎていれば積もらせる
+  useEffect(() => {
+    if (!timing) return;
+    const check = () => {
+      if (document.hidden) return;
+      if (Date.now() >= timing.endAt) { clearTimeout(timing.to); chime(); navigator.vibrate?.([7, 16, 11]); addGrain(timing.gi, timing.i); setTiming(null); }
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => { document.removeEventListener("visibilitychange", check); window.removeEventListener("focus", check); };
+  }, [timing]);
 
   const addHabit = () => {
     const name = hi.trim(); if (!name) return;
@@ -944,7 +981,7 @@ export default function App() {
     const isTimed = type === "timed";
     const running = !!(timing && timing.key === (g.id + ":" + h.id));
     const btnDisabled = isTimed ? (full || (!st.ok && !running)) : dis;
-    const handlers = isTimed ? { onClick: () => startTimer(i) } : { onPointerDown: down(i), onPointerUp: up, onPointerLeave: up, onPointerCancel: up };
+    const handlers = isTimed ? { onPointerDown: timedDown(i), onPointerUp: timedUp(i), onPointerLeave: timedUp(i), onPointerCancel: timedUp(i) } : { onPointerDown: down(i), onPointerUp: up, onPointerLeave: up, onPointerCancel: up };
     const perDay = mode === "week" ? 1 : Math.max(1, h.perDay || 1);
     const frac = dueT ? Math.min(tdc / perDay, 1) : 0; // 1日◯回の進捗
     const fc = gold ? GOLD_FILL : h.c;
@@ -1006,7 +1043,7 @@ export default function App() {
                 const a = -Math.PI / 2 + k * (2 * Math.PI / perDay);
                 return <line key={k} x1={CX} y1={CX} x2={CX + (RR - 1.5) * Math.cos(a)} y2={CX + (RR - 1.5) * Math.sin(a)} stroke="rgba(11,12,16,0.28)" strokeWidth="1.4" />;
               })}
-              {held === i && !isTimed && <circle cx={CX} cy={CX} r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
+              {held === i && (!isTimed || running) && <circle cx={CX} cy={CX} r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
                 strokeDasharray={CIRC} strokeDashoffset={CIRC} transform={`rotate(-90 ${CX} ${CX})`} style={{ animation: `fillring ${HOLD}ms linear forwards` }} />}
               {running && <circle cx={CX} cy={CX} r={RR} fill="none" stroke={col} strokeWidth="3" strokeLinecap="round"
                 strokeDasharray={CIRC} strokeDashoffset={CIRC} transform={`rotate(-90 ${CX} ${CX})`} style={{ animation: `fillring ${timing.dur}ms linear forwards` }} />}
