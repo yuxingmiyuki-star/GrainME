@@ -444,6 +444,8 @@ export default function App() {
 
   const canvasRef = useRef(null);
   const stageRef = useRef(null), trackRef = useRef(null); // ドラッグ追従カルーセル
+  const orbWrapRef = useRef(null); // ライブcanvasのラッパー（ドラッグ中に平行移動）
+  const prevCarRef = useRef(0); // 前フレームのカルーセル位置（スロッシュ用の速度算出）
   const dragRef = useRef(null); // 進行中ドラッグの生データ（再描画を避けるためref）
   const ballsBy = useRef({});
   const orbRef = useRef(orbPal);
@@ -574,9 +576,15 @@ export default function App() {
       const cap = capOf(g);
       const R = grainR(cap || 30), bs = ballsBy.current[g.id] || [];
       const sim = simState.current[g.id] || (simState.current[g.id] = { active: 360, calm: 0 });
+      // 器スクロールに連動した横スロッシュ：ドラッグ速度を疑似慣性として粒へ
+      const dr = dragRef.current, dragging = !!(dr && dr.decided === "h");
+      const carX = dragging ? (dr.x || 0) : 0;
+      const vCar = carX - prevCarRef.current; prevCarRef.current = carX;
+      let ax = 0;
+      if (dragging) { ax = Math.max(-2.5, Math.min(2.5, -vCar * 0.13)); sim.active = Math.max(sim.active, 8); sim.calm = 0; }
       if (sim.active > 0) {
       for (const b of bs) {
-        b.vy += GRAV; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
+        b.vy += GRAV; b.vx += ax; b.x += b.vx; b.y += b.vy; b.vx *= FRIC;
         const dx = b.x - CX, dy = b.y - CY, d = Math.hypot(dx, dy) || 0.01;
         if (d + R > CR) { const nx = dx / d, ny = dy / d; b.x = CX + nx * (CR - R); b.y = CY + ny * (CR - R); const vn = b.vx * nx + b.vy * ny; b.vx -= (1 + REST) * vn * nx; b.vy -= (1 + REST) * vn * ny; }
       }
@@ -902,33 +910,49 @@ export default function App() {
         dr.decided = "hf";
       } else {
         dr.decided = "h";
+        prevCarRef.current = 0;
+        const cg = goalsRef.current[curGi]; if (cg) wake(cg.id); // ライブ物理を起こしてスロッシュさせる
         setDrag({ urls, w });
       }
       return;
     }
-    if (dr.decided === "h" && trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + (dr.x = dx)}px)`;
+    if (dr.decided === "h") {
+      dr.x = dx;
+      if (trackRef.current) trackRef.current.style.transform = `translateX(${-dr.w + dx}px)`;
+      if (orbWrapRef.current) { orbWrapRef.current.style.transition = ""; orbWrapRef.current.style.transform = `translateX(${dx}px)`; orbWrapRef.current.style.opacity = "1"; }
+    }
     if (dr.decided === "hf") dr.x = dx;
   };
+  const resetOrbWrap = () => { const ow = orbWrapRef.current; if (ow) { ow.style.transition = ""; ow.style.transform = ""; ow.style.opacity = ""; } };
   const onStageUp = () => {
-    const dr = dragRef.current; dragRef.current = null;
+    const dr = dragRef.current; dragRef.current = null; prevCarRef.current = 0;
     if (!dr) return;
     if (dr.decided === "hf") {
       const w = dr.w || 320, x = dr.x || 0;
       if (x < -w * 0.22) setPage(dr.nextPos); else if (x > w * 0.22) setPage(dr.prevPos);
       return;
     }
-    if (dr.decided !== "h") return;
-    const w = dr.w, x = dr.x || 0, tr = trackRef.current;
+    if (dr.decided !== "h") { resetOrbWrap(); return; }
+    const w = dr.w, x = dr.x || 0, tr = trackRef.current, ow = orbWrapRef.current;
     const commit = x < -w * 0.22 ? 1 : x > w * 0.22 ? -1 : 0; // 22%超で確定
-    const finish = () => { if (commit === 1) setPage(dr.nextPos); else if (commit === -1) setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
+    const EASE = "transform .28s cubic-bezier(.22,1,.3,1)";
+    if (commit === 0) { // 戻す：ライブのままスロッシュを見せつつ中央へ
+      if (ow) { ow.style.transition = EASE; ow.style.transform = "translateX(0px)"; }
+      if (tr) { tr.style.transition = EASE; tr.style.transform = `translateX(${-w}px)`; }
+      setTimeout(() => { resetOrbWrap(); setDrag(null); }, 300);
+      return;
+    }
+    // 隣へ確定：ライブを隠してスナップショットのトラックで送る
+    if (ow) ow.style.opacity = "0";
+    const finish = () => { resetOrbWrap(); if (commit === 1) setPage(dr.nextPos); else setPage(dr.prevPos); requestAnimationFrame(() => requestAnimationFrame(() => setDrag(null))); };
     if (tr) {
-      tr.style.transition = "transform .28s cubic-bezier(.22,1,.3,1)";
-      tr.style.transform = `translateX(${commit === 1 ? -2 * w : commit === -1 ? 0 : -w}px)`;
+      tr.style.transition = EASE;
+      tr.style.transform = `translateX(${commit === 1 ? -2 * w : 0}px)`;
       let done = false; const h = () => { if (done) return; done = true; tr.removeEventListener("transitionend", h); finish(); };
       tr.addEventListener("transitionend", h); setTimeout(h, 380);
     } else finish();
   };
-  const onStageCancel = () => { if (dragRef.current?.decided === "h") { dragRef.current = null; setDrag(null); } else dragRef.current = null; };
+  const onStageCancel = () => { if (dragRef.current?.decided === "h") { dragRef.current = null; prevCarRef.current = 0; resetOrbWrap(); setDrag(null); } else dragRef.current = null; };
   // 今日の各習慣の状態。week=週◯回（毎日は強制しない）、それ以外＝毎日・曜日（今日やるべき必須枠）
   const todayStatuses = hasGoal ? g.habits.map((h, i) => ({ st: habitStatus(curGi, i), week: (h.fmode || "daily") === "week" })) : [];
   const reqOpen = todayStatuses.some(({ st, week }) => st.ok && !week); // 毎日・曜日に未完が残っている
@@ -1100,7 +1124,7 @@ export default function App() {
         </div>
 
         <div ref={stageRef} style={{ ...s.stageWrap, position: "relative" }}>
-          <div style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: drag ? 0 : 1 }}>
+          <div ref={orbWrapRef} style={{ animation: trans ? `${trans.dir > 0 ? "orbInNext" : "orbInPrev"} .3s cubic-bezier(.22,1,.3,1)` : "none", opacity: 1 }}>
             <canvas ref={canvasRef} style={{ width: 320, height: 300, maxWidth: "100%", display: "block", margin: "0 auto" }} />
           </div>
           {trans && <img src={trans.url} alt="" onAnimationEnd={() => setTrans(null)} style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 320, height: 300, maxWidth: "100%", pointerEvents: "none", animation: `${trans.dir > 0 ? "orbOutNext" : "orbOutPrev"} .3s cubic-bezier(.22,1,.3,1) forwards` }} />}
@@ -1128,11 +1152,11 @@ export default function App() {
           )}
           {drag && (
             <div ref={trackRef} style={{ position: "absolute", top: 0, left: 0, width: drag.w * 3, height: 300, transform: `translateX(${-drag.w}px)`, willChange: "transform", pointerEvents: "none" }}>
-              {drag.urls.map((u, k) => (
+              {drag.urls.map((u, k) => (k === 1 ? null : (
                 <div key={k} style={{ position: "absolute", top: 0, left: k * drag.w, width: drag.w, height: 300, display: "flex", justifyContent: "center" }}>
                   <img src={u} alt="" style={{ width: 320, maxWidth: "100%", height: 300, display: "block" }} />
                 </div>
-              ))}
+              )))}
             </div>
           )}
         </div>
