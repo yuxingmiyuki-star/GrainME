@@ -1635,8 +1635,9 @@ export default function App() {
                   }, { passive: false });
                   el.addEventListener("touchend", () => {
                     if (decided === "h") {
-                      if (dxv < -50) setDetailPage((p) => Math.min(p + 1, dDragRef.current.total - 1));
-                      else if (dxv > 50) setDetailPage((p) => Math.max(p - 1, 0));
+                      const tot = dDragRef.current.total;
+                      if (dxv < -50) setDetailPage((p) => (p + 1) % tot);
+                      else if (dxv > 50) setDetailPage((p) => (p - 1 + tot) % tot);
                     }
                     decided = null;
                   });
