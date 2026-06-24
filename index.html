@@ -1078,7 +1078,7 @@ export default function App() {
         ) : (
         <div style={{ ...s.habits, gap: compact === 2 ? 2 : compact === 1 ? 3 : 4 }}>
           {showCoach && !editMode && <div style={s.coach}>アイコンを長押しすると、器にひと粒落ちます<span style={s.coachArrow}>▾</span></div>}
-          <div style={{ ...s.grid, gap: compact === 2 ? 4 : compact === 1 ? 8 : 12 }}>
+          <div style={{ ...s.grid, gap: compact === 2 ? 4 : compact === 1 ? 8 : 12, ...(habitRows.length === 1 ? { minHeight: 220, justifyContent: "center" } : {}) }}>
           {habitRows.map((row, ri) => {
             const two = row.length === 2; // 2個の行は画面を3分割するように散らす
             return (
