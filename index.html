@@ -157,7 +157,7 @@ function drawOrb(ctx, bs, R, cap, now, o, img, gc) {
   const bgl = ctx.createRadialGradient(CX, CY + CR * 0.5, 4, CX, CY + CR * 0.5, CR);
   bgl.addColorStop(0, `rgba(${tint.join(",")},${fill * 0.18})`); bgl.addColorStop(1, `rgba(${tint.join(",")},0)`);
   ctx.fillStyle = bgl; ctx.beginPath(); ctx.arc(CX, CY, CR, 0, 7); ctx.fill();
-  // 空の器：かすかな息づき。粒が無いときだけ、ゆっくり巡る光と底でただよう数粒で「死んでない」感を出す
+  // 空の器：かすかな息づき。粒が無いときだけ、ゆっくり巡る光＋漂う粒＋底に積もった粒で「ここに溜まる」を見せる
   if (bs.length === 0) {
     ctx.save(); ctx.beginPath(); ctx.arc(CX, CY, CR - 0.5, 0, 7); ctx.clip();
     const ts = now / 1000;
@@ -166,10 +166,27 @@ function drawOrb(ctx, bs, R, cap, now, o, img, gc) {
     const glow = ctx.createRadialGradient(lx, ly, 2, lx, ly, CR * 0.95);
     glow.addColorStop(0, `rgba(${tint.join(",")},${0.045 + breathe * 0.05})`); glow.addColorStop(1, `rgba(${tint.join(",")},0)`);
     ctx.fillStyle = glow; ctx.fillRect(CX - CR, CY - CR, CR * 2, CR * 2);
-    for (let i = 0; i < 3; i++) {
-      const ph = i * 2.1;
-      const mx = CX + Math.sin(ts * 0.34 + ph) * CR * 0.46;
-      const my = CY + CR * 0.46 + Math.cos(ts * 0.28 + ph) * CR * 0.1;
+    // 底に積もった粒（プレビュー）。実データではないので少し透かす
+    ctx.globalAlpha = 0.5;
+    const D2R = Math.PI / 180;
+    const pile = [
+      [CR - R - 0.5, -46], [CR - R - 0.5, -23], [CR - R - 0.5, 0], [CR - R - 0.5, 23], [CR - R - 0.5, 46],
+      [CR - 2.6 * R, -23], [CR - 2.6 * R, 0], [CR - 2.6 * R, 23],
+    ];
+    pile.forEach(([rr, deg], i) => {
+      const a = Math.PI / 2 + deg * D2R, px = CX + rr * Math.cos(a), py = CY + rr * Math.sin(a);
+      const [r, g2, bl] = PAL[i % PAL.length];
+      const gr = ctx.createRadialGradient(px - R * 0.25, py - R * 0.3, 0.4, px, py, R);
+      gr.addColorStop(0, `rgb(${Math.min(r + 30, 255)},${Math.min(g2 + 30, 255)},${Math.min(bl + 30, 255)})`);
+      gr.addColorStop(1, `rgb(${r * 0.84 | 0},${g2 * 0.84 | 0},${bl * 0.84 | 0})`);
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(px, py, R, 0, 7); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+    // 漂う粒（5粒）。中ほどをゆっくり巡る
+    for (let i = 0; i < 5; i++) {
+      const ph = i * 1.3;
+      const mx = CX + Math.sin(ts * 0.34 + ph) * CR * 0.5;
+      const my = CY - CR * 0.05 + Math.cos(ts * 0.26 + ph * 1.4) * CR * 0.22;
       const ma = 0.09 + 0.05 * Math.sin(ts * 0.8 + ph);
       const m = ctx.createRadialGradient(mx, my, 0, mx, my, 5.5);
       m.addColorStop(0, `rgba(${tint.join(",")},${ma})`); m.addColorStop(1, `rgba(${tint.join(",")},0)`);
