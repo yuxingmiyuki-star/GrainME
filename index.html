@@ -603,7 +603,7 @@ export default function App() {
     const src = a.createBufferSource(); src.buffer = noiseBuf(a); src.loop = true;
     const bp = a.createBiquadFilter(); bp.type = "bandpass"; bp.Q.setValueAtTime(7, t0);
     bp.frequency.setValueAtTime(250, t0); bp.frequency.exponentialRampToValueAtTime(4000, t0 + Tm);
-    const g = a.createGain(); g.gain.setValueAtTime(0.02, t0); g.gain.linearRampToValueAtTime(0.12, t0 + Tm);
+    const g = a.createGain(); g.gain.setValueAtTime(0.05, t0); g.gain.linearRampToValueAtTime(0.30, t0 + Tm);
     src.connect(bp); bp.connect(g); g.connect(a.destination); src.start(); sweep.current = { src, g };
   };
   const stopSimmer = (fade = 0.05) => {
@@ -614,7 +614,7 @@ export default function App() {
   const chime = () => { const a = ensure(), t = a.currentTime;
     [[1046.50, 0, 0.08], [1318.51, 0.06, 0.25], [1567.98, 0.14, 0.45]].forEach(([f, dl, st]) => {
       const o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.setValueAtTime(f, t + dl);
-      g.gain.setValueAtTime(0, t); g.gain.setValueAtTime(0.05, t + dl); g.gain.exponentialRampToValueAtTime(0.001, t + st);
+      g.gain.setValueAtTime(0, t); g.gain.setValueAtTime(0.15, t + dl); g.gain.exponentialRampToValueAtTime(0.001, t + st);
       o.connect(g); g.connect(a.destination); o.start(t + dl); o.stop(t + st);
     });
   };
@@ -623,11 +623,11 @@ export default function App() {
     const a = ensure(), t = a.currentTime;
     [523.25, 659.25, 783.99, 1046.50, 1318.51].forEach((f, i) => {
       const o = a.createOscillator(), g = a.createGain(); o.type = i < 2 ? "sine" : "triangle"; o.frequency.value = f;
-      const t0 = t + i * 0.09, dur = 1.7; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.1, t0 + 0.02);
+      const t0 = t + i * 0.09, dur = 1.7; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.25, t0 + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0004, t0 + dur); o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.05);
     });
     const o2 = a.createOscillator(), g2 = a.createGain(); o2.type = "sine"; o2.frequency.value = 130.81;
-    g2.gain.setValueAtTime(0.0001, t); g2.gain.linearRampToValueAtTime(0.08, t + 0.06); g2.gain.exponentialRampToValueAtTime(0.0004, t + 2.0);
+    g2.gain.setValueAtTime(0.0001, t); g2.gain.linearRampToValueAtTime(0.20, t + 0.06); g2.gain.exponentialRampToValueAtTime(0.0004, t + 2.0);
     o2.connect(g2); g2.connect(a.destination); o2.start(t); o2.stop(t + 2.1);
   };
   // 今日のぶん完了：やわらかな金のピン
@@ -635,7 +635,7 @@ export default function App() {
     const a = ensure(), t = a.currentTime;
     [783.99, 1174.66].forEach((f, i) => {
       const o = a.createOscillator(), g = a.createGain(); o.type = "sine"; o.frequency.value = f;
-      const t0 = t + i * 0.09; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.06, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.6);
+      const t0 = t + i * 0.09; g.gain.setValueAtTime(0.0001, t0); g.gain.linearRampToValueAtTime(0.18, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.6);
       o.connect(g); g.connect(a.destination); o.start(t0); o.stop(t0 + 0.65);
     });
   };
