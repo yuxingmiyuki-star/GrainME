@@ -510,7 +510,7 @@ export default function App() {
       const a = (Math.random() - 0.5) * 2.4, rr = (CR - R) * (0.5 + Math.random() * 0.45);
       return { x: CX + Math.sin(a) * rr * 0.6, y: CY + Math.cos(a) * rr * 0.7, vx: 0, vy: 0, c: byId[hid] || [150, 150, 150], hid, born: 0 };
     });
-    wake(goal.id);
+    simState.current[goal.id] = { active: 0, calm: 0 };
   };
   // ゴールのオーブを画像化（隣のゴールをドラッグ中に並べて見せる用）
   const snapshotGoal = (goal) => {
