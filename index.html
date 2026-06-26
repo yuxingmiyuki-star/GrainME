@@ -1224,13 +1224,13 @@ export default function App() {
           </div>
         </div>
 
-        <div style={{ ...s.idBlock, paddingTop: 2 }}>
+        <div style={{ ...s.idBlock, paddingTop: 2, position: "relative" }}>
           {hasGoal ? (<>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, paddingRight: 44 }}>
               <div style={s.idLabel}>なりたい自分</div>
               <div key={g.id} style={{ ...s.idName, color: full ? T.gold : T.hi, animation: "achfade .3s ease" }}>{g.name}{full ? "（なれた）" : ""}</div>
             </div>
-            <button style={s.analyzeBtn} onClick={() => { setGoalDetail(curGi); setDetailPage(0); }} aria-label="分析"><BarChart3 size={16} color={T.lo} strokeWidth={2.2} /></button>
+            <button style={{ ...s.analyzeBtn, position: "absolute", top: 0, right: 0 }} onClick={() => { setGoalDetail(curGi); setDetailPage(0); }} aria-label="分析"><BarChart3 size={16} color={T.lo} strokeWidth={2.2} /></button>
           </>) : (
             <div style={{ visibility: "hidden" }} aria-hidden>
               <div style={s.idLabel}>なりたい自分</div>
