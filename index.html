@@ -1064,7 +1064,7 @@ export default function App() {
     : { D: 88, icon: 30, emoji: 30, w: 98, gap: 3 };
   // 習慣エリアに使える高さを画面から逆算し、円が収まる直径の上限を求める
   // 画面全体 − ヘッダー − 目標名 − オーブ − dots(薄) − 編集ドック − screenの上下padding/gap など固定ぶん
-  const RESERVED = 34 /*header*/ + 60 /*目標名*/ + 34 /*dots薄*/ + 40 /*編集ドック*/ + 60 /*padding+gap*/ + 24 /*safe下*/;
+  const RESERVED = 34 /*header*/ + 60 /*目標名*/ + 34 /*dots薄*/ + 40 /*編集ドック*/ + 44 /*padding+gap*/ + 16 /*safe下*/;
   const availH = Math.max(150, vh - orbH - RESERVED);
   // 行あたりに使える高さ。1セル= 円 + ラベル(~22) + 行gap。行数で割る
   const rowGap = compact === 2 ? 3 : compact === 1 ? 6 : 12;
@@ -1253,7 +1253,7 @@ export default function App() {
   return (
     <div className="tsumiki-app" style={{ ...s.page, "--ac": goldRgb(T).join(",") }} onContextMenu={(e) => e.preventDefault()}>
       <style>{KEY}</style>
-      <div style={{ ...s.screen, gap: 6, padding: "10px 20px 18px", touchAction: "none" }} onPointerDown={onStageDown} onPointerMove={onStageMove} onPointerUp={onStageUp} onPointerCancel={onStageCancel}>
+      <div style={{ ...s.screen, gap: 6, padding: "10px 20px 6px", touchAction: "none" }} onPointerDown={onStageDown} onPointerMove={onStageMove} onPointerUp={onStageUp} onPointerCancel={onStageCancel}>
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           <div style={s.bar}>
             <span style={s.wordmark}>GrainME</span>
@@ -2191,7 +2191,7 @@ const mkRaw = (T) => ({
   dotOn: { background: T.gold, width: 18, borderRadius: 4 },
   dotPlus: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", color: T.lo, fontSize: 12, cursor: "pointer", lineHeight: 1, padding: 0, marginLeft: 2, display: "flex", alignItems: "center", justifyContent: "center" },
   dotPlusThin: { width: 22, height: 22, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", color: T.lo2, fontSize: 11, cursor: "pointer", lineHeight: 1, padding: 0, marginLeft: 2, display: "flex", alignItems: "center", justifyContent: "center" },
-  grid: { display: "flex", flexDirection: "column", alignItems: "center", padding: 0 },
+  grid: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 0 },
   gridRow: { display: "flex", justifyContent: "center", alignItems: "flex-start" },
   cell: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, width: 84 },
   circleBtn: { position: "relative", width: 78, height: 78, borderRadius: "50%", background: "transparent", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", userSelect: "none", touchAction: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent", outline: "none", padding: 0 },
