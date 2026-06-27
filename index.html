@@ -1063,8 +1063,8 @@ export default function App() {
     : hcEff <= 4 ? { D: 120, icon: 41, emoji: 40, w: 132, gap: 4 }
     : { D: 88, icon: 30, emoji: 30, w: 98, gap: 3 };
   // 習慣エリアに使える高さを画面から逆算し、円が収まる直径の上限を求める
-  // 画面全体 − ヘッダー − 目標名 − オーブ − dots(薄) − screenの上下padding/gap など固定ぶん
-  const RESERVED = 34 /*header*/ + 60 /*目標名*/ + 34 /*dots薄*/ + 70 /*padding+gap+ツール余白*/ + 24 /*safe下*/;
+  // 画面全体 − ヘッダー − 目標名 − オーブ − dots(薄) − 編集ドック − screenの上下padding/gap など固定ぶん
+  const RESERVED = 34 /*header*/ + 60 /*目標名*/ + 34 /*dots薄*/ + 40 /*編集ドック*/ + 60 /*padding+gap*/ + 24 /*safe下*/;
   const availH = Math.max(150, vh - orbH - RESERVED);
   // 行あたりに使える高さ。1セル= 円 + ラベル(~22) + 行gap。行数で割る
   const rowGap = compact === 2 ? 3 : compact === 1 ? 6 : 12;
@@ -1368,15 +1368,18 @@ export default function App() {
             );
           })}
           </div>
-          <div style={s.habitToolsFixed}>
-            <button style={{ ...s.editIcon, ...(editMode ? s.editIconOn : {}) }} onClick={() => setEditMode((m) => !m)} aria-label={editMode ? "完了" : "習慣を編集"}>
-              {editMode ? <Check size={15} color="#0B0C10" strokeWidth={3} /> : <Pencil size={14} color={T.lo} strokeWidth={2.2} />}
-            </button>
-          </div>
-          {editMode && <div style={s.editHintBar}>タップで編集・長押しで並べ替え</div>}
         </div>
         )}
         </div>)}
+        {/* 編集ボタン＆ヒント：習慣エリアの下、画面最下部に配置 */}
+        {hasGoal && g.habits.length > 0 && (
+          <div style={s.editDock}>
+            <button style={{ ...s.editIcon, ...(editMode ? s.editIconOn : {}), position: "absolute", left: -4 }} onClick={() => setEditMode((m) => !m)} aria-label={editMode ? "完了" : "習慣を編集"}>
+              {editMode ? <Check size={15} color="#0B0C10" strokeWidth={3} /> : <Pencil size={14} color={T.lo} strokeWidth={2.2} />}
+            </button>
+            {editMode && <div style={s.editHintBar}>タップで編集・長押しで並べ替え</div>}
+          </div>
+        )}
       </div>
 
       {/* 記録カレンダー（裏面の編集アイコン長押しで開く。○✕をあとから編集） */}
@@ -2165,7 +2168,8 @@ const mkRaw = (T) => ({
   habitTools: { display: "flex", justifyContent: "flex-start", alignItems: "center" },
   habitToolsFloat: { display: "flex", alignItems: "center", justifyContent: "flex-start", paddingLeft: 2, marginTop: 2 },
   habitToolsFixed: { position: "absolute", left: -4, bottom: -6, display: "flex", alignItems: "center", zIndex: 4 },
-  editHintBar: { position: "absolute", left: "50%", bottom: -8, transform: "translateX(-50%)", zIndex: 4, fontSize: 11.5, color: T.gold, fontWeight: 600, letterSpacing: 0.3, whiteSpace: "nowrap", background: `${T.gold}1f`, border: `1px solid ${T.gold}55`, borderRadius: 999, padding: "5px 14px", animation: "achfade .3s ease" },
+  editDock: { position: "relative", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 34, marginTop: 4, flexShrink: 0 },
+  editHintBar: { fontSize: 11.5, color: T.gold, fontWeight: 600, letterSpacing: 0.3, whiteSpace: "nowrap", background: `${T.gold}1f`, border: `1px solid ${T.gold}55`, borderRadius: 999, padding: "5px 14px", animation: "achfade .3s ease" },
   animChip: { background: "transparent", border: `1px solid ${T.hair2}`, color: T.lo, borderRadius: 999, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
   animChipOn: { borderColor: T.gold, color: T.gold, background: `${T.gold}1a` },
   editIcon: { width: 30, height: 30, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0 },
@@ -2294,7 +2298,7 @@ const mkRaw = (T) => ({
   emptyBig: { fontSize: 26, fontWeight: 800, color: T.gold, letterSpacing: 1 },
   emptySub: { fontSize: 13, color: T.lo, lineHeight: 1.7 },
   achNote: { fontSize: 11.5, color: T.gold, opacity: 0.8, marginTop: -2, marginBottom: 4 },
-  noHabits: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: "8px 24px", textAlign: "center", flex: 1, minHeight: 0 },
+  noHabits: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: "8px 24px", paddingBottom: 80, textAlign: "center", flex: 1, minHeight: 0 },
   noHabitsTxt: { fontSize: 13.5, color: T.lo, lineHeight: 1.8 },
   streakBadge: { position: "absolute", top: -3, right: -4, background: T.gold, color: T.onGold, borderRadius: 999, minWidth: 18, height: 18, padding: "0 5px", display: "flex", alignItems: "center", justifyContent: "center", gap: 1, fontSize: 11, fontWeight: 800, fontFamily: "ui-monospace, monospace", boxShadow: `0 0 10px ${T.gold}80` },
   playBtn: { position: "absolute", bottom: -2, right: -2, width: 34, height: 34, borderRadius: 999, background: T.gold, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", padding: 0, zIndex: 4, boxShadow: "0 1px 6px rgba(0,0,0,0.5)", lineHeight: 1 },
