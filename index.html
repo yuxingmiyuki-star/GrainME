@@ -1235,9 +1235,9 @@ export default function App() {
                 <div key={g.id} style={{ ...s.idName, color: full ? T.gold : T.hi, animation: "achfade .3s ease" }}><span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{g.name}{full ? "（なれた）" : ""}</span></div>
               </div>
             </>) : (
-              <div style={{ visibility: "hidden" }} aria-hidden>
+              <div style={{ flex: 1, minWidth: 0, visibility: "hidden" }} aria-hidden>
                 <div style={s.idLabel}>なりたい自分</div>
-                <div style={s.idName}>&nbsp;</div>
+                <div style={{ ...s.idName }}>&nbsp;</div>
               </div>
             )}
           </div>
@@ -2123,7 +2123,7 @@ const mkRaw = (T) => ({
   bar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   wordmark: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 3, color: T.lo },
   mono: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 1, color: T.gold },
-  idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2 },
+  idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2, flexShrink: 0 },
   analyzeBtn: { width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
   habits: { display: "flex", flexDirection: "column", gap: 4, position: "relative", flex: 1, minHeight: 0, justifyContent: "center" },
   habitTools: { display: "flex", justifyContent: "flex-start", alignItems: "center" },
