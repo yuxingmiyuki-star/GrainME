@@ -1177,6 +1177,9 @@ export default function App() {
             onPointerUp={() => { if (hDragFromRef.current === null) { clearTimeout(hHoldRef.current); openEdit(i); } }}
             onPointerLeave={() => { if (hDragFromRef.current === null) clearTimeout(hHoldRef.current); }}>
             {frontInner}
+            <span style={{ position:"absolute", inset:0, borderRadius:"50%", background:"rgba(11,12,16,0.42)", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+              <Pencil size={14} color={T.gold} strokeWidth={2.4} />
+            </span>
           </button>
           ) : (
           <div style={{ position: "relative", width: D, height: D, perspective: 600 }}>
@@ -1203,7 +1206,6 @@ export default function App() {
               <ExternalLink size={11} color={T.lo} strokeWidth={2.4} />
             </a>
           )}
-          {editMode && <button style={s.editBadge} onClick={(e) => { e.stopPropagation(); openEdit(i); }} aria-label={`${h.name} を編集`}><Pencil size={11} color="#0B0C10" strokeWidth={2.6} /></button>}
         </div>
         <span style={s.cellLabel}>{h.name}</span>
         {perDay > 1 && dueT && !full && <span style={{ ...s.cellStatus, color: tdc >= perDay ? T.gold : T.lo }}>{tdc}/{perDay}</span>}
