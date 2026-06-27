@@ -1218,7 +1218,7 @@ export default function App() {
     <div className="tsumiki-app" style={{ ...s.page, "--ac": goldRgb(T).join(",") }} onContextMenu={(e) => e.preventDefault()}>
       <style>{KEY}</style>
       <div style={{ ...s.screen, gap: 6, padding: "10px 20px 18px", touchAction: "none" }} onPointerDown={onStageDown} onPointerMove={onStageMove} onPointerUp={onStageUp} onPointerCancel={onStageCancel}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0, minHeight: 108 }}>
           <div style={s.bar}>
             <span style={s.wordmark}>GrainME</span>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2123,7 +2123,7 @@ const mkRaw = (T) => ({
   bar: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   wordmark: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 3, color: T.lo },
   mono: { fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, letterSpacing: 1, color: T.gold },
-  idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 2, flexShrink: 0 },
+  idBlock: { display: "flex", alignItems: "center", gap: 10, paddingTop: 0, flexShrink: 0 },
   analyzeBtn: { width: 34, height: 34, borderRadius: 999, border: `1px solid ${T.hair2}`, background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 },
   habits: { display: "flex", flexDirection: "column", gap: 4, position: "relative", flex: 1, minHeight: 0, justifyContent: "center" },
   habitTools: { display: "flex", justifyContent: "flex-start", alignItems: "center" },
