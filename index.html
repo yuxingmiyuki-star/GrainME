@@ -1223,7 +1223,7 @@ export default function App() {
             <span style={s.wordmark}>GrainME</span>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <button style={s.colBtn} onClick={() => setShowCol(true)}>✦ {collection.length}</button>
-              {hasGoal && <button style={s.analyzeBtn} aria-label="分析" onClick={() => { setGoalDetail(curGi); setDetailPage(0); }}><BarChart3 size={16} color={T.lo} strokeWidth={2.2} /></button>}
+              <button style={{ ...s.analyzeBtn, visibility: hasGoal ? "visible" : "hidden" }} aria-label="分析" onClick={() => { setGoalDetail(curGi); setDetailPage(0); }}><BarChart3 size={16} color={T.lo} strokeWidth={2.2} /></button>
               <button style={s.iconBtn} aria-label="設定" onClick={() => { setIoMsg(""); setShowSettings(true); }}><Settings size={17} color={T.lo} strokeWidth={2} /></button>
             </div>
           </div>
