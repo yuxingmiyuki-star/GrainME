@@ -279,11 +279,30 @@ const streakInfo = (h, L, day) => {
   const arr = h.days || [0, 1, 2, 3, 4, 5, 6];
   const sched = mode === "days" ? (d) => arr.includes(((d % 7) + 7) % 7) : () => true;
   const met = (d) => (hist[d] || 0) >= pd;
+  const grace = !!(h.grace); // 2日間ルール：2日連続ミスでなければ継続
   let cur = 0, d = day;
   if (sched(day) && !met(day)) d = day - 1;
-  for (; d >= sd; d--) { if (!sched(d)) continue; if (met(d)) cur++; else break; }
-  let best = 0, run = 0;
-  for (let dd = sd; dd <= day; dd++) { if (!sched(dd)) continue; if (met(dd)) { run++; if (run > best) best = run; } else if (!(dd === day && !met(day))) run = 0; }
+  if (grace) {
+    // 直近の未実施を最大1日まで許容して遡る
+    let missAllowed = 1;
+    for (; d >= sd; d--) {
+      if (!sched(d)) continue;
+      if (met(d)) { cur++; missAllowed = 1; } // 達成したら許容をリセット
+      else if (d < day && missAllowed > 0) { missAllowed--; } // 1日は許容
+      else break;
+    }
+  } else {
+    for (; d >= sd; d--) { if (!sched(d)) continue; if (met(d)) cur++; else break; }
+  }
+  let best = 0, run = 0, runMiss = 0;
+  for (let dd = sd; dd <= day; dd++) {
+    if (!sched(dd)) continue;
+    if (met(dd)) { run++; runMiss = 0; if (run > best) best = run; }
+    else if (!(dd === day && !met(day))) {
+      if (grace && runMiss < 1) { runMiss++; } // graceなら1日は許容
+      else { run = 0; runMiss = 0; }
+    }
+  }
   if (cur > best) best = cur;
   return { cur, best, unit: "日" };
 };
@@ -766,14 +785,25 @@ export default function App() {
   const dayToDate = (dn) => new Date((dn - 4) * DAY_MS); // getUTC* で年月日/曜日を読む
   const dateToDay = (y, m, d) => Math.floor(Date.UTC(y, m, d) / DAY_MS) + 4;
   // カレンダー1マスの状態：done(○)/miss(✕)/blank(薄丸)/future(薄丸)
+  // hist値: >0=done, -1=手動blank, 0/なし=未記録
   const calCellState = (h, L, dn) => {
     if (dn > day) return "future";
-    if (((L && L.hist) || {})[dn] > 0) return "done";
-    if (h.startDay && dn < h.startDay) return "blank"; // 習慣作成前は空欄（✕にしない）
+    const hist = (L && L.hist) || {};
+    if (hist[dn] > 0) return "done";
+    if (hist[dn] === -1) return "blank"; // 手動でblankにした
+    if (h.startDay && dn < h.startDay) return "blank"; // 習慣作成前
     const mode = h.fmode || "daily";
-    if (mode === "week") return "blank"; // 週◯回は未達でも空欄
+    if (mode === "week") {
+      // その日の属する週が終わっている（今日が翌週以降）かつ週ノルマ未達ならmiss
+      const wk = Math.floor(dn / 7);
+      const curWk = Math.floor(day / 7);
+      if (wk >= curWk) return "blank"; // 今週はまだ判定しない
+      const target = Math.max(1, h.perWeek || 3);
+      let wkDone = 0; for (const d in hist) { if (hist[d] > 0 && Math.floor(+d / 7) === wk) wkDone++; }
+      return wkDone < target ? "miss" : "blank";
+    }
     if (mode === "days") { const dow = dayToDate(dn).getUTCDay(); if (!(h.days || [0, 1, 2, 3, 4, 5, 6]).includes(dow)) return "blank"; }
-    return "miss"; // 毎日・曜日対象日でやってない過去日は✕
+    return dn < day ? "miss" : "blank"; // 過去の対象日は✕、今日は空欄丸
   };
   // 履歴(hist)の合計に合わせて、その習慣の粒数を増減（器の見た目を記録と一致させる）
   const reconcileGrains = (goal, hb, hist) => {
@@ -794,7 +824,7 @@ export default function App() {
   };
   const openCal = (gi, i) => { const d = dayToDate(day); setCal({ gi, i, ym: { y: d.getUTCFullYear(), m: d.getUTCMonth() } }); };
   const calShift = (delta) => setCal((c) => { if (!c) return c; let m = c.ym.m + delta, y = c.ym.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } return { ...c, ym: { y, m } }; });
-  // 日付をタップ＝その日の記録をトグル（○⇄なし）。未来は不可
+  // 日付をタップ＝3ステート循環：done(○)→miss(✕)→blank(空欄)→done(○)
   const toggleDay = (gi, i, dn) => {
     if (dn > day) return;
     const goal = goals[gi]; const hb = goal && goal.habits[i]; if (!hb) return;
@@ -803,10 +833,13 @@ export default function App() {
     const hist = { ...(L.hist || {}) };
     const mode = hb.fmode || "daily";
     const fullCount = mode === "week" ? 1 : Math.max(1, hb.perDay || 1);
-    if (hist[dn] > 0) delete hist[dn]; else hist[dn] = fullCount;
+    const cur = hist[dn];
+    if (cur > 0) { hist[dn] = -1; }          // done → miss(手動blank)
+    else if (cur === -1) { delete hist[dn]; } // miss → blank(未記録に戻す)
+    else { hist[dn] = fullCount; }            // blank → done
     const wk = Math.floor(day / 7);
-    const td = hist[day] || 0;
-    let wc = 0; for (const d in hist) if (Math.floor(+d / 7) === wk) wc += hist[d];
+    const td = Math.max(0, hist[day] || 0);
+    let wc = 0; for (const d in hist) if (hist[d] > 0 && Math.floor(+d / 7) === wk) wc += hist[d];
     setLogs((m) => ({ ...m, [key]: { day, td, wk, wc, hist } }));
     reconcileGrains(goal, hb, hist);
     bump();
@@ -829,17 +862,17 @@ export default function App() {
   };
 
   // ---- habit editor ----
-  const blankDraft = (habitCount = 0) => ({ name: "", iconIdx: 14, iconAuto: true, emoji: "", colorIdx: habitCount % SWATCHES.length, type: "pos", min: 10, perDay: 1, fmode: "daily", days: [0, 1, 2, 3, 4, 5, 6], perWeek: 3, remOn: false, remTime: "08:00", url: "" });
+  const blankDraft = (habitCount = 0) => ({ name: "", iconIdx: 14, iconAuto: true, emoji: "", colorIdx: habitCount % SWATCHES.length, type: "pos", min: 10, perDay: 1, fmode: "daily", days: [0, 1, 2, 3, 4, 5, 6], perWeek: 3, grace: false, remOn: false, remTime: "08:00", url: "" });
   const habitToDraft = (h, gi) => {
     const ii = ICONS.indexOf(h.Icon); const ci = SWATCHES.findIndex((c) => c[0] === h.c[0] && c[1] === h.c[1] && c[2] === h.c[2]);
-    return { name: h.name, iconIdx: ii < 0 ? 0 : ii, iconAuto: false, emoji: h.emoji || "", colorIdx: ci < 0 ? 0 : ci, type: h.type || "pos", min: h.min || 10, perDay: h.perDay || 1, fmode: h.fmode || "daily", days: h.days || [0, 1, 2, 3, 4, 5, 6], perWeek: h.perWeek || 3, remOn: h.remOn || false, remTime: h.remTime || "08:00", url: h.url || "" };
+    return { name: h.name, iconIdx: ii < 0 ? 0 : ii, iconAuto: false, emoji: h.emoji || "", colorIdx: ci < 0 ? 0 : ci, type: h.type || "pos", min: h.min || 10, perDay: h.perDay || 1, fmode: h.fmode || "daily", days: h.days || [0, 1, 2, 3, 4, 5, 6], perWeek: h.perWeek || 3, grace: h.grace || false, remOn: h.remOn || false, remTime: h.remTime || "08:00", url: h.url || "" };
   };
   const openAdd = () => { if (curGi < 0 || goals[curGi].habits.length >= MAX_HABITS) return; setEditor({ gi: curGi, hIndex: -1, draft: blankDraft(goals[curGi].habits.length) }); };
   const openEdit = (i) => setEditor({ gi: curGi, hIndex: i, draft: habitToDraft(goals[curGi].habits[i], curGi), detailOpen: true });
   const setD = (patch) => setEditor((e) => ({ ...e, draft: { ...e.draft, ...patch } }));
   const saveHabit = () => {
     const d = editor.draft; if (!d.name.trim()) return;
-    const base = { name: d.name.trim(), Icon: ICONS[d.iconIdx], emoji: d.emoji || "", c: SWATCHES[d.colorIdx], type: d.type, min: d.min, perDay: d.perDay, fmode: d.fmode, days: d.days, perWeek: d.perWeek, remOn: d.remOn, remTime: d.remTime, url: d.url };
+    const base = { name: d.name.trim(), Icon: ICONS[d.iconIdx], emoji: d.emoji || "", c: SWATCHES[d.colorIdx], type: d.type, min: d.min, perDay: d.perDay, fmode: d.fmode, days: d.days, perWeek: d.perWeek, grace: d.grace || false, remOn: d.remOn, remTime: d.remTime, url: d.url };
     const goal = goals[editor.gi];
     const existing = editor.hIndex >= 0 ? goal.habits[editor.hIndex] : null;
     const saved = { ...base, id: existing ? existing.id : uid(), startDay: existing ? (existing.startDay ?? 0) : day };
@@ -1396,15 +1429,19 @@ export default function App() {
                 {cells.map((dn, idx) => {
                   if (dn == null) return <div key={"e" + idx} />;
                   const stt = calCellState(ch, cL, dn);
-                  const isToday = dn === day, future = dn > day, past = dn < day;
+                  const isToday = dn === day, future = dn > day;
                   const num = dayToDate(dn).getUTCDate();
                   if (stt === "done") {
+                    // ○ → タップで✕へ
                     return <button key={dn} onClick={() => toggleDay(cal.gi, cal.i, dn)} style={{ ...base, background: col, color: onCol, border: isToday ? `2px solid ${T.hi}` : "2px solid transparent", cursor: "pointer" }}>{num}</button>;
                   }
-                  if (stt === "miss" && past) { // 過去の未実施だけ✕
-                    return <button key={dn} onClick={() => toggleDay(cal.gi, cal.i, dn)} style={{ ...base, border: "2px solid transparent", cursor: "pointer" }} aria-label={`${num}日 未実施`}><span style={{ fontSize: 18, fontWeight: 800, color: T.lo }}>✕</span></button>;
+                  if (stt === "miss") {
+                    // ✕ → タップで空欄丸へ
+                    return <button key={dn} onClick={() => toggleDay(cal.gi, cal.i, dn)} style={{ ...base, border: "2px solid transparent", cursor: "pointer" }} aria-label={`${num}日 未実施`}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: T.lo }}>✕</span>
+                    </button>;
                   }
-                  // 空欄＝薄い丸（週◯回の未達・習慣作成前・今日の未実施・未来）
+                  // 空欄丸（blank/future/今日） → 未来以外タップで○へ
                   return <button key={dn} disabled={future} onClick={() => { if (!future) toggleDay(cal.gi, cal.i, dn); }} style={{ ...base, color: future ? T.lo2 : T.lo, border: isToday ? `2px solid ${col}` : `1.5px solid ${T.hair2}`, opacity: future ? 0.45 : 0.9, cursor: future ? "default" : "pointer" }}>{num}</button>;
                 })}
               </div>
@@ -1702,6 +1739,23 @@ export default function App() {
                   <div style={s.sliderRow} onPointerDown={(e) => e.stopPropagation()}>
                     <input type="range" min="1" max="10" step="1" value={d.perDay} style={s.slider} onChange={(e) => setD({ perDay: +e.target.value })} />
                     <span style={s.sliderVal}>{d.perDay}回</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 2日間ルール：毎日/曜日モードのみ */}
+              {d.fmode !== "week" && (
+                <div style={s.field}>
+                  <div style={{ background: T.surface, border: `1px solid ${T.hair}`, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <label style={s.lab}>2日間ルール</label>
+                        <div style={{ ...s.mSub, marginTop: 2 }}>1日ミスしてもストリーク継続</div>
+                      </div>
+                      <button style={{ ...s.toggle, background: d.grace ? T.gold : T.hair2 }} onClick={() => setD({ grace: !d.grace })}>
+                        <span style={{ ...s.knob, transform: d.grace ? "translateX(18px)" : "none" }} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
