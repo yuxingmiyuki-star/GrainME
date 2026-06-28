@@ -1177,8 +1177,8 @@ export default function App() {
             onPointerUp={() => { if (hDragFromRef.current === null) { clearTimeout(hHoldRef.current); openEdit(i); } }}
             onPointerLeave={() => { if (hDragFromRef.current === null) clearTimeout(hHoldRef.current); }}>
             {frontInner}
-            <span style={{ position:"absolute", inset:0, borderRadius:"50%", background:"rgba(11,12,16,0.58)", border:`2px dashed ${T.gold}`, boxSizing:"border-box", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
-              <Pencil size={20} color={T.gold} strokeWidth={2.8} />
+            <span style={{ position:"absolute", inset:0, borderRadius:"50%", background: T.orb === "bright" ? "rgba(255,255,255,0.55)" : "rgba(11,12,16,0.58)", border:`2px dashed ${T.gold}`, boxSizing:"border-box", display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
+              <Pencil size={Math.round(D * 0.27)} color={T.gold} strokeWidth={2.8} />
             </span>
           </button>
           ) : (
@@ -1188,7 +1188,7 @@ export default function App() {
                 {frontInner}
               </button>
               <button onContextMenu={(e) => e.preventDefault()} {...backHandlers} aria-label={`${h.name} の記録を編集（長押しでカレンダー）`} style={{ ...s.circleBtn, position: "absolute", inset: 0, width: D, height: D, borderRadius: "50%", border: `2px solid ${T.hair2}`, background: T.surface, transform: "rotateY(180deg)", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", pointerEvents: isFlipped ? "auto" : "none" }} disabled={false}>
-                <Pencil size={sz.icon} color={T.gold} strokeWidth={2.2} style={{ position: "relative" }} />
+                <Pencil size={sz.icon} color={T.hi} strokeWidth={2.2} style={{ position: "relative" }} />
               </button>
             </div>
           </div>
